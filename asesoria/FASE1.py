@@ -1,0 +1,81 @@
+import json
+import time
+from groq import Groq, APIError
+
+API_KEYS = [
+    "***GROQ_KEY_1_REMOVED***",
+    "***GROQ_KEY_2_REMOVED***"
+]
+
+def obtener_cliente(indice_key: int) -> Groq:
+    return Groq(api_key=API_KEYS[indice_key])
+
+def llamar_groq_completions(messages, model="llama-3.1-8b-instant", temperature=0.3, response_format=None):
+    for intento, key_index in enumerate(range(len(API_KEYS))):
+        try:
+            cliente = obtener_cliente(key_index)
+            kwargs = {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature
+            }
+            if response_format:
+                kwargs["response_format"] = response_format
+                
+            respuesta = cliente.chat.completions.create(**kwargs)
+            return respuesta
+        except APIError as e:
+            if getattr(e, 'status_code', None) == 429 and intento < len(API_KEYS) - 1:
+                time.sleep(2)
+                continue
+            raise e
+
+async def ejecutar_fase_asesoria(primer_mensaje: str):
+    prompt_sistema = """Eres el asesor de salud naturista de Nature's Green.
+    Tu objetivo es diagnosticar el problema del cliente haciendo preguntas breves y precisas sobre sus síntomas.
+    Una vez que tengas claro qué tipo de dolencia tiene, recomiéndale un TIPO DE PRODUCTO ESPECÍFICO (ej. pomada antiinflamatoria, té relajante, jarabe para la tos, colágeno).
+    
+    Reglas:
+    - Haz preguntas amables y cortas (máximo 2 oraciones).
+    - Cuando ya sepas qué recomendar, dile al cliente tu recomendación y dile que vas a revisar si hay stock de eso.
+    - La respuesta debe seguir estrictamente este JSON:
+      {"respuesta": "Lo que dices al cliente", "estado": "consultando | producto_encontrado", "producto_sugerido": "nombre del producto si estado es producto_encontrado"}
+    - "estado" debe ser "consultando" mientras indagas.
+    - Cambia "estado" a "producto_encontrado" solo cuando ya sepas qué recomendar y se lo hayas comunicado en la "respuesta". En ese caso, en "producto_sugerido" pon un sustantivo genérico clave (ej. "pomada", "colágeno", "jarabe") para buscar en la base de datos.
+    """
+    
+    historial = [
+        {"role": "system", "content": prompt_sistema},
+        {"role": "user", "content": primer_mensaje}
+    ]
+    
+    while True:
+        try:
+            respuesta_api = llamar_groq_completions(
+                messages=historial,
+                temperature=0.3,
+                response_format={"type": "json_object"}
+            )
+            
+            datos = json.loads(respuesta_api.choices[0].message.content)
+            respuesta_ia = datos.get("respuesta", "Error generando respuesta")
+            estado = datos.get("estado", "consultando")
+            producto_sugerido = datos.get("producto_sugerido", "")
+            
+            print(f"Nature's Green (Asesor): {respuesta_ia}")
+            
+            if estado == "producto_encontrado" and producto_sugerido:
+                return "ir_a_producto", producto_sugerido
+                
+            historial.append({"role": "assistant", "content": json.dumps(datos)})
+            
+            mensaje_usuario = input("Tú: ")
+            if mensaje_usuario.lower() == 'salir':
+                print("Saliendo de la asesoría...")
+                return "salir", ""
+                
+            historial.append({"role": "user", "content": mensaje_usuario})
+            
+        except Exception as e:
+            print(f"\n[Error en Asesoría]: {e}")
+            return "error", ""
