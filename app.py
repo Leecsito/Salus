@@ -1,3 +1,4 @@
+# pyrefly: ignore [missing-import]
 from flask import Flask, render_template, request, jsonify, session
 import os
 import asyncio
@@ -8,15 +9,15 @@ import traceback
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from main import responder_recepcion
-from asesoria.FASE1 import responder_asesoria
-from producto.FASE1 import ejecutar_fase_2 as ejecutar_producto
+from asesoria.asesoria import responder_asesoria
+from producto.producto import ejecutar_busqueda_producto as ejecutar_producto
 
-# Mapa de fases -> info de debug (carpeta y módulo)
+# Mapa de fases -> info de debug (carpeta y módulo activo)
 FASE_INFO = {
-    "recepcion": {"carpeta": "/ (raíz)",   "modulo": "main.py"},
-    "asesoria":  {"carpeta": "asesoria/",   "modulo": "asesoria/FASE1.py"},
-    "producto":  {"carpeta": "producto/",   "modulo": "producto/FASE1.py"},
-    "historial": {"carpeta": "historial/",  "modulo": "historial/FASE1.py (pendiente)"},
+    "recepcion": {"carpeta": "/ (raíz)",  "modulo": "main.py"},
+    "asesoria":  {"carpeta": "asesoria/", "modulo": "asesoria/asesoria.py"},
+    "producto":  {"carpeta": "producto/", "modulo": "producto/producto.py → extractor.py → database.py → vendedor.py"},
+    "historial": {"carpeta": "historial/","modulo": "historial/historial.py (pendiente)"},
 }
 
 app = Flask(__name__)
