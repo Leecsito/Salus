@@ -1,0 +1,5 @@
+flask
+gunicorn
+groq
+libsql-client
+asyncio
