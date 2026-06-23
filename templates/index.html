@@ -3,23 +3,47 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nature's Green - Recepcionista Virtual</title>
-    <meta name="description" content="Asistente virtual de salud y tienda naturista Nature's Green.">
+    <title>SALUS - Asistente Virtual</title>
+    <meta name="description" content="SALUS: Asistente virtual de salud y farmacia naturista.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
     <div class="app-container">
+
+        <!-- ── DEBUG BANNER ────────────────────────────────────────── -->
+        <div class="debug-banner" id="debug-banner">
+            <div class="debug-pill">
+                <span class="debug-label">🐛 DEBUG</span>
+                <span class="debug-sep">|</span>
+                <span class="debug-item">
+                    <span class="debug-key">Fase:</span>
+                    <span class="debug-val" id="debug-fase">recepcion</span>
+                </span>
+                <span class="debug-sep">·</span>
+                <span class="debug-item">
+                    <span class="debug-key">Módulo:</span>
+                    <span class="debug-val" id="debug-modulo">main.py</span>
+                </span>
+                <span class="debug-sep">·</span>
+                <span class="debug-item">
+                    <span class="debug-key">Carpeta:</span>
+                    <span class="debug-val" id="debug-carpeta">/ (raíz)</span>
+                </span>
+            </div>
+        </div>
+        <!-- ──────────────────────────────────────────────────────── -->
+
         <div class="chat-wrapper">
             <header class="chat-header">
                 <div class="brand">
                     <div class="avatar">
-                        <span class="leaf-icon">🌿</span>
+                        <span class="leaf-icon">⚕️</span>
                     </div>
                     <div class="brand-info">
-                        <h1>Nature's Green</h1>
+                        <h1>SALUS</h1>
                         <span class="status">En línea</span>
                     </div>
                 </div>
@@ -27,10 +51,10 @@
                     <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
                 </button>
             </header>
-            
+
             <main class="chat-messages" id="chat-messages">
                 <div class="message system-message">
-                    <p>Bienvenido a Nature's Green. ¿En qué te podemos ayudar hoy?</p>
+                    <p>Bienvenido a SALUS. ¿En qué te podemos ayudar hoy?</p>
                 </div>
             </main>
 

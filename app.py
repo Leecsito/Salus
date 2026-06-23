@@ -11,6 +11,14 @@ from main import responder_recepcion
 from asesoria.FASE1 import responder_asesoria
 from producto.FASE1 import ejecutar_fase_2 as ejecutar_producto
 
+# Mapa de fases -> info de debug (carpeta y módulo)
+FASE_INFO = {
+    "recepcion": {"carpeta": "/ (raíz)",   "modulo": "main.py"},
+    "asesoria":  {"carpeta": "asesoria/",   "modulo": "asesoria/FASE1.py"},
+    "producto":  {"carpeta": "producto/",   "modulo": "producto/FASE1.py"},
+    "historial": {"carpeta": "historial/",  "modulo": "historial/FASE1.py (pendiente)"},
+}
+
 app = Flask(__name__)
 # Clave secreta fija para que las sesiones sobrevivan reinicios del servidor
 app.secret_key = os.environ.get("SECRET_KEY", "natures-green-secret-2026")
@@ -60,6 +68,19 @@ def chat():
     fase_actual = session.get('fase', 'recepcion')
     historial = session.get('historial', [])
 
+    def ok(respuesta, fase):
+        """Helper: construye la respuesta JSON con info de debug."""
+        info = FASE_INFO.get(fase, {"carpeta": "?", "modulo": "?"})
+        return jsonify({
+            "respuesta": respuesta,
+            "fase": fase,
+            "debug": {
+                "fase":    fase,
+                "modulo":  info["modulo"],
+                "carpeta": info["carpeta"],
+            }
+        })
+
     try:
         if fase_actual == 'recepcion':
             respuesta_ia, intencion, nuevo_historial = responder_recepcion(mensaje_usuario, historial)
@@ -70,7 +91,7 @@ def chat():
                 session['historial'] = []
 
             session.modified = True
-            return jsonify({"respuesta": respuesta_ia, "fase": session['fase']})
+            return ok(respuesta_ia, session['fase'])
 
         elif fase_actual == 'asesoria':
             respuesta_ia, estado, producto_sugerido, nuevo_historial = responder_asesoria(mensaje_usuario, historial)
@@ -87,15 +108,15 @@ def chat():
                     respuesta_completa = respuesta_ia
 
                 session.modified = True
-                return jsonify({"respuesta": respuesta_completa, "fase": "producto"})
+                return ok(respuesta_completa, "producto")
 
             session.modified = True
-            return jsonify({"respuesta": respuesta_ia, "fase": session['fase']})
+            return ok(respuesta_ia, session['fase'])
 
         elif fase_actual == 'producto':
             respuesta_ia = asyncio.run(ejecutar_producto(mensaje_usuario))
             session.modified = True
-            return jsonify({"respuesta": respuesta_ia, "fase": session['fase']})
+            return ok(respuesta_ia, session['fase'])
 
         elif fase_actual == 'historial':
             return jsonify({

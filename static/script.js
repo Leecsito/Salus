@@ -5,6 +5,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const sendBtn = document.getElementById('send-btn');
     const resetBtn = document.getElementById('reset-btn');
 
+    // ── Debug banner ────────────────────────────────────────────
+    const elFase    = document.getElementById('debug-fase');
+    const elModulo  = document.getElementById('debug-modulo');
+    const elCarpeta = document.getElementById('debug-carpeta');
+
+    function updateDebugBanner(debug) {
+        if (!debug) return;
+        if (elFase)    elFase.textContent    = debug.fase    || '?';
+        if (elModulo)  elModulo.textContent  = debug.modulo  || '?';
+        if (elCarpeta) elCarpeta.textContent = debug.carpeta || '?';
+    }
+    // ───────────────────────────────────────────────────────────
     // Auto-focus input
     messageInput.focus();
 
@@ -83,6 +95,7 @@ document.addEventListener('DOMContentLoaded', () => {
             
             if (response.ok) {
                 addMessage(data.respuesta, 'bot');
+                updateDebugBanner(data.debug);
             } else {
                 addMessage('Lo siento, ocurrió un error de conexión.', 'system');
             }
