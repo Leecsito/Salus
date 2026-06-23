@@ -10,18 +10,6 @@ API_KEYS = [
 def obtener_cliente(indice_key: int) -> Groq:
     return Groq(api_key=API_KEYS[indice_key])
 
-import json
-import time
-from groq import Groq, APIError
-
-API_KEYS = [
-    "***GROQ_KEY_1_REMOVED***",
-    "***GROQ_KEY_2_REMOVED***"
-]
-
-def obtener_cliente(indice_key: int) -> Groq:
-    return Groq(api_key=API_KEYS[indice_key])
-
 PROMPT_SISTEMA_RECEPCION = """Eres el recepcionista virtual de Nature's Green. Hablas con calidez, empatía genuina y cercanía, como alguien que realmente se preocupa por la persona. Nunca suenas frío, robótico ni insistente. Tu objetivo es acompañar al cliente en la conversación hasta descubrir exactamente qué necesita, sin apresurarlo. Tus respuestas son siempre cortas: máximo 1-2 frases, sin rodeos ni texto de relleno.
 
 Debes clasificar su necesidad en una de estas 3 rutas:
