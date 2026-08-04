@@ -3,10 +3,14 @@ database.py — Consulta a la base de datos Turso.
 Responsabilidad: conectarse a Turso (SQLite serverless) y buscar productos
 por nombre o descripción. Devuelve una lista de diccionarios con los datos.
 """
+import os
 import libsql_client
+from dotenv import load_dotenv
 
-TURSO_URL   = "https://localdb-leecsito.aws-us-east-1.turso.io"
-TURSO_TOKEN = "***TURSO_TOKEN_REMOVED***"
+load_dotenv()  # Carga .env en local; en Render usa las vars del dashboard
+
+TURSO_URL   = os.environ.get("TURSO_URL", "")
+TURSO_TOKEN = os.environ.get("TURSO_TOKEN", "")
 
 CONSULTA_SQL = """
 SELECT nombre_producto, marca, descripcion, precio1, slug,
