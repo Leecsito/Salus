@@ -2,4 +2,4 @@ flask
 gunicorn
 groq
 libsql-client
-asyncio
+python-dotenv
