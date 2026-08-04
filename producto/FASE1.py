@@ -1,18 +1,14 @@
 import os
 import json
 import asyncio
+import sys
 import time
 import libsql_client
 from groq import Groq, APIError
 
-TURSO_URL = "https://localdb-leecsito.aws-us-east-1.turso.io"
-TURSO_TOKEN = "***TURSO_TOKEN_REMOVED***"
-
-
-API_KEYS = [
-    "***GROQ_KEY_1_REMOVED***",
-    "***GROQ_KEY_2_REMOVED***"
-]
+# Importa credenciales desde el módulo central — sólo hay que cambiarlas en config.py
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from config import API_KEYS, TURSO_URL, TURSO_TOKEN
 
 def obtener_cliente(indice_key: int) -> Groq:
     return Groq(api_key=API_KEYS[indice_key])

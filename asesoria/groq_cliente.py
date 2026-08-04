@@ -3,14 +3,13 @@ groq_cliente.py — Cliente compartido de Groq para el módulo de Asesoría.
 Maneja el fallback automático entre múltiples API Keys si se recibe error 429.
 """
 import os
+import sys
 import time
 from groq import Groq, APIError
-from dotenv import load_dotenv
 
-load_dotenv()  # Carga .env en local; en Render usa las vars del dashboard
-
-_raw_keys = os.environ.get("GROQ_API_KEYS", "")
-API_KEYS = [k.strip() for k in _raw_keys.split(",") if k.strip()]
+# Importa las keys desde el módulo central de configuración
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from config import API_KEYS
 
 def obtener_cliente(indice_key: int) -> Groq:
     return Groq(api_key=API_KEYS[indice_key])

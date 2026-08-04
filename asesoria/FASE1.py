@@ -1,11 +1,12 @@
 import json
+import os
+import sys
 import time
 from groq import Groq, APIError
 
-API_KEYS = [
-    "***GROQ_KEY_1_REMOVED***",
-    "***GROQ_KEY_2_REMOVED***"
-]
+# Importa credenciales desde el módulo central — sólo hay que cambiarlas en config.py
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from config import API_KEYS
 
 def obtener_cliente(indice_key: int) -> Groq:
     return Groq(api_key=API_KEYS[indice_key])

@@ -4,13 +4,12 @@ Responsabilidad: conectarse a Turso (SQLite serverless) y buscar productos
 por nombre o descripción. Devuelve una lista de diccionarios con los datos.
 """
 import os
+import sys
 import libsql_client
-from dotenv import load_dotenv
 
-load_dotenv()  # Carga .env en local; en Render usa las vars del dashboard
-
-TURSO_URL   = os.environ.get("TURSO_URL", "")
-TURSO_TOKEN = os.environ.get("TURSO_TOKEN", "")
+# Importa las credenciales desde el módulo central de configuración
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from config import TURSO_URL, TURSO_TOKEN
 
 CONSULTA_SQL = """
 SELECT nombre_producto, marca, descripcion, precio1, slug,

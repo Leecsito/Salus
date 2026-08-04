@@ -2,12 +2,9 @@ import json
 import os
 import time
 from groq import Groq, APIError
-from dotenv import load_dotenv
-
-load_dotenv()  # Carga .env en local; en Render usa las vars del dashboard
-
-_raw_keys = os.environ.get("GROQ_API_KEYS", "")
-API_KEYS = [k.strip() for k in _raw_keys.split(",") if k.strip()]
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from config import API_KEYS
 
 def obtener_cliente(indice_key: int) -> Groq:
     return Groq(api_key=API_KEYS[indice_key])
