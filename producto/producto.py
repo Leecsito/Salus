@@ -23,6 +23,6 @@ async def ejecutar_busqueda_producto(mensaje_usuario: str) -> str:
     resultados_db = await buscar_producto(termino)
 
     # Paso 3: Generar la respuesta con IA
-    respuesta_final = generar_respuesta_vendedor(mensaje_usuario, resultados_db)
+    respuesta_final = generar_respuesta_vendedor(termino, resultados_db)
 
     return respuesta_final

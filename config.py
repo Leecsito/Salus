@@ -19,12 +19,16 @@ load_dotenv()  # No hace nada en producción (Render inyecta las vars directamen
 _raw_keys = os.environ.get("GROQ_API_KEYS", "")
 API_KEYS: list[str] = [k.strip() for k in _raw_keys.split(",") if k.strip()]
 
+# Modelo usado en todo el proyecto (se puede cambiar sin tocar código con GROQ_MODEL)
+MODELO: str = os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b")
+
 # ── Turso ─────────────────────────────────────────────────────────────────────
 TURSO_URL: str = os.environ.get("TURSO_URL", "")
 TURSO_TOKEN: str = os.environ.get("TURSO_TOKEN", "")
 
 # ── Flask ─────────────────────────────────────────────────────────────────────
-SECRET_KEY: str = os.environ.get("SECRET_KEY", "cambia-esto-en-produccion")
+# Sin default inseguro: es obligatoria (ver validar_config).
+SECRET_KEY: str = os.environ.get("SECRET_KEY", "")
 
 # ── Validación al arrancar ────────────────────────────────────────────────────
 def validar_config():
@@ -36,7 +40,9 @@ def validar_config():
         errores.append("TURSO_URL no está definida.")
     if not TURSO_TOKEN:
         errores.append("TURSO_TOKEN no está definida.")
+    if not SECRET_KEY:
+        errores.append("SECRET_KEY no está definida (genera una aleatoria, ver .env.example).")
     if errores:
         raise EnvironmentError(
-            "Faltan variables de entorno requeridas:\\n" + "\\n".join(f"  - {e}" for e in errores)
+            "Faltan variables de entorno requeridas:\n" + "\n".join(f"  - {e}" for e in errores)
         )

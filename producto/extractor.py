@@ -4,7 +4,7 @@ Responsabilidad: usar IA para extraer el sustantivo principal (singular) del
 mensaje del usuario, descartando frases de síntomas o verbos de acción.
 """
 import json
-from producto.groq_cliente import llamar_groq
+from groq_cliente import llamar_groq
 
 PROMPT_EXTRACCION = """Analiza el mensaje del usuario y extrae ÚNICAMENTE el sustantivo principal del producto que está buscando, en SINGULAR y sin frases adicionales.
 IGNORA descripciones de síntomas o frases como 'para aliviar el dolor', 'que tengan', 'busco'.

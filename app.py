@@ -1,5 +1,7 @@
-# pyrefly: ignore [missing-import]
 from flask import Flask, render_template, request, jsonify, session
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from werkzeug.exceptions import HTTPException
 import os
 import asyncio
 import sys
@@ -8,36 +10,51 @@ import traceback
 # Agregar la ruta actual para las importaciones
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+from config import SECRET_KEY, validar_config
 from main import responder_recepcion
 from asesoria.asesoria import responder_asesoria
 from producto.producto import ejecutar_busqueda_producto as ejecutar_producto
 
-# Mapa de fases -> info de debug (carpeta y módulo activo)
-FASE_INFO = {
-    "recepcion": {"carpeta": "/ (raíz)",  "modulo": "main.py"},
-    "asesoria":  {"carpeta": "asesoria/", "modulo": "asesoria/asesoria.py"},
-    "producto":  {"carpeta": "producto/", "modulo": "producto/producto.py → extractor.py → database.py → vendedor.py"},
-    "historial": {"carpeta": "historial/","modulo": "historial/historial.py (pendiente)"},
-}
+# Falla al arrancar si faltan variables críticas (mejor que fallar en la primera petición)
+validar_config()
 
 app = Flask(__name__)
-# Clave secreta fija para que las sesiones sobrevivan reinicios del servidor
-app.secret_key = os.environ.get("SECRET_KEY", "natures-green-secret-2026")
+app.secret_key = SECRET_KEY
+
+# Cookies de sesión: no accesibles por JS y solo por HTTPS en producción (Render)
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=bool(os.environ.get("RENDER")),
+)
+
+# Límite de peticiones por IP para proteger la cuota gratuita de Groq
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=[],
+    storage_uri="memory://",
+)
 
 # ── Handlers globales de error: SIEMPRE devuelven JSON, nunca HTML ──────────
 @app.errorhandler(404)
 def not_found(e):
-    return jsonify({"respuesta": f"Ruta no encontrada: {e}"}), 404
+    return jsonify({"respuesta": "Ruta no encontrada."}), 404
+
+@app.errorhandler(429)
+def rate_limit(e):
+    return jsonify({"respuesta": "Estás enviando mensajes muy rápido. Espera un momento e intenta de nuevo."}), 429
 
 @app.errorhandler(500)
 def server_error(e):
-    return jsonify({"respuesta": f"Error interno del servidor: {e}"}), 500
+    return jsonify({"respuesta": "Error interno del servidor."}), 500
 
 @app.errorhandler(Exception)
 def unhandled_exception(e):
-    tb = traceback.format_exc()
-    print(f"[EXCEPCIÓN NO MANEJADA]:\n{tb}")
-    return jsonify({"respuesta": f"Error inesperado: {str(e)}"}), 500
+    if isinstance(e, HTTPException):
+        return jsonify({"respuesta": f"Error {e.code}: {e.name}"}), e.code
+    print(f"[EXCEPCIÓN NO MANEJADA]:\n{traceback.format_exc()}")
+    return jsonify({"respuesta": "Error inesperado. Intenta de nuevo."}), 500
 # ─────────────────────────────────────────────────────────────────────────────
 
 @app.route("/")
@@ -48,10 +65,11 @@ def index():
     return render_template("index.html")
 
 @app.route("/api/chat", methods=["POST"])
+@limiter.limit("30 per minute;500 per day")
 def chat():
     """
     Endpoint síncrono principal del chatbot.
-    La corrutina async de producto/FASE1.py se ejecuta con asyncio.run().
+    La corrutina async de producto/producto.py se ejecuta con asyncio.run().
     """
     data = request.get_json(force=True, silent=True)
     if not data:
@@ -70,17 +88,7 @@ def chat():
     historial = session.get('historial', [])
 
     def ok(respuesta, fase):
-        """Helper: construye la respuesta JSON con info de debug."""
-        info = FASE_INFO.get(fase, {"carpeta": "?", "modulo": "?"})
-        return jsonify({
-            "respuesta": respuesta,
-            "fase": fase,
-            "debug": {
-                "fase":    fase,
-                "modulo":  info["modulo"],
-                "carpeta": info["carpeta"],
-            }
-        })
+        return jsonify({"respuesta": respuesta, "fase": fase})
 
     try:
         if fase_actual == 'recepcion':
@@ -129,10 +137,9 @@ def chat():
             session.clear()
             return jsonify({"respuesta": "Sesión reiniciada. ¿En qué te puedo ayudar?", "fase": "recepcion"})
 
-    except Exception as e:
-        tb = traceback.format_exc()
-        print(f"[ERROR en /api/chat]:\n{tb}")
-        return jsonify({"respuesta": f"Error al procesar tu mensaje: {str(e)}"}), 500
+    except Exception:
+        print(f"[ERROR en /api/chat]:\n{traceback.format_exc()}")
+        return jsonify({"respuesta": "Lo siento, ocurrió un error al procesar tu mensaje. Intenta de nuevo."}), 500
 
 
 @app.route("/api/reset", methods=["POST"])

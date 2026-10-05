@@ -1,13 +1,8 @@
 import json
 import os
-import time
-from groq import Groq, APIError
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import API_KEYS
-
-def obtener_cliente(indice_key: int) -> Groq:
-    return Groq(api_key=API_KEYS[indice_key])
+from groq_cliente import llamar_groq
 
 PROMPT_SISTEMA_RECEPCION = """Eres el recepcionista virtual de Nature's Green. Hablas con calidez, empatía genuina y cercanía, como alguien que realmente se preocupa por la persona. Nunca suenas frío, robótico ni insistente. Tu objetivo es acompañar al cliente en la conversación hasta descubrir exactamente qué necesita, sin apresurarlo. Tus respuestas son siempre cortas: máximo 1-2 frases, sin rodeos ni texto de relleno.
 
@@ -49,27 +44,21 @@ def responder_recepcion(mensaje_usuario: str, historial: list):
         
     historial.append({"role": "user", "content": mensaje_usuario})
     
-    for intento, key_index in enumerate(range(len(API_KEYS))):
-        try:
-            cliente = obtener_cliente(key_index)
-            respuesta_api = cliente.chat.completions.create(
-                model="openai/gpt-oss-20b",
-                messages=historial,
-                temperature=0.3,
-                response_format={"type": "json_object"}
-            )
-            
-            datos = json.loads(respuesta_api.choices[0].message.content)
-            respuesta_ia = datos.get("respuesta", "Error generando respuesta")
-            intencion = datos.get("intencion", "pendiente")
-            
-            historial.append({"role": "assistant", "content": json.dumps(datos)})
-            
-            return respuesta_ia, intencion, historial
-            
-        except APIError as e:
-            if getattr(e, 'status_code', None) in (401, 429) and intento < len(API_KEYS) - 1:
-                time.sleep(2)
-                continue
-            return f"Error de API: {e}", "error", historial
-    return "Error inesperado", "error", historial
+    try:
+        respuesta_api = llamar_groq(
+            messages=historial,
+            temperature=0.3,
+            response_format={"type": "json_object"}
+        )
+
+        datos = json.loads(respuesta_api.choices[0].message.content)
+        respuesta_ia = datos.get("respuesta", "Error generando respuesta")
+        intencion = datos.get("intencion", "pendiente")
+
+        historial.append({"role": "assistant", "content": json.dumps(datos)})
+
+        return respuesta_ia, intencion, historial
+
+    except Exception as e:
+        print(f"[main.py] Error al consultar Groq: {e}")
+        return "Lo siento, tuve un problema para responder. Intenta de nuevo en unos segundos.", "error", historial

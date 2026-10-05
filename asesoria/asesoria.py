@@ -4,7 +4,7 @@ Responsabilidad: mantener la conversación con el cliente para diagnosticar
 su necesidad y recomendar un tipo de producto específico.
 """
 import json
-from asesoria.groq_cliente import llamar_groq
+from groq_cliente import llamar_groq
 
 PROMPT_SISTEMA = """Eres el asesor de salud naturista de Nature's Green.
 Tu objetivo es diagnosticar el problema del cliente haciendo preguntas breves y precisas sobre sus síntomas.
@@ -49,4 +49,5 @@ def responder_asesoria(mensaje_usuario: str, historial: list):
         return respuesta_ia, estado, producto_sugerido, historial
 
     except Exception as e:
-        return f"[asesoria/asesoria.py] Error: {e}", "error", "", historial
+        print(f"[asesoria/asesoria.py] Error: {e}")
+        return "Lo siento, tuve un problema para responder. Intenta de nuevo en unos segundos.", "error", "", historial

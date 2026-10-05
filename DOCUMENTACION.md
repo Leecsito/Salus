@@ -17,12 +17,13 @@
 |------|------------|-----------|
 | **Lenguaje base** | Python 3.11 | Núcleo del servidor y de los módulos de IA |
 | **Framework web** | Flask 3.x | Rutas HTTP, sesiones, renderizado de plantillas |
-| **Servidor de producción** | Gunicorn | `Procfile`: `web: gunicorn app:app` (Render) |
+| **Servidor de producción** | Gunicorn | `Procfile`: `web: gunicorn app:app --workers 2 --threads 4 --timeout 120` (Render) |
 | **IA / LLM** | GPT-OSS 20B (API de **Groq**, SDK `groq`) | Clasificación de intenciones, diálogo de asesoría, extracción del término y generación de respuestas |
 | **Base de datos** | **Turso** (SQLite serverless) vía `libsql-client` | Catálogo de productos de Nature's Green |
 | **Configuración** | `python-dotenv` + variables de entorno | Credenciales y secretos (única fuente: `config.py`) |
 | **Estado de sesión** | Flask `session` (cookie cifrada con `SECRET_KEY`) | Guarda `fase` actual e `historial` de mensajes entre peticiones HTTP |
-| **Frontend** | HTML5, CSS3 vanilla, JavaScript (Fetch API) | Interfaz de chat con banner de debug |
+| **Frontend** | HTML5, CSS3 vanilla, JavaScript (Fetch API) | Interfaz de chat minimalista |
+| **Protección** | Flask-Limiter | Límite de peticiones por IP en `/api/chat` (protege la cuota de Groq) |
 | **Hosting** | **Render** (plan gratuito) | Despliegue desde Git con Gunicorn |
 
 Modelo Groq usado en todo el proyecto: `openai/gpt-oss-20b`.
@@ -36,30 +37,27 @@ Salus/
 │
 ├── app.py                       # Servidor Flask: rutas, sesiones y máquina de estados de fases
 ├── main.py                      # Fase Recepción: recepcionista virtual (clasifica intención)
+├── groq_cliente.py              # Cliente Groq único: fallback de API Keys ante 401/429
 ├── config.py                    # Configuración central: único lugar que lee variables de entorno
-├── Procfile                     # Instrucción de arranque para Render (gunicorn app:app)
-├── requirements.txt             # Dependencias Python del proyecto
+├── Procfile                     # Instrucción de arranque para Render (gunicorn con timeout/workers)
+├── requirements.txt             # Dependencias Python del proyecto (versiones fijadas)
 ├── .env.example                 # Plantilla de variables de entorno para desarrollo local
 ├── DOCUMENTACION.md             # Documentación técnica central (este archivo)
 │
 ├── asesoria/                    # FASE 2 — Asesor de salud
-│   ├── asesoria.py              # Prompt del asesor + orquestación de la conversación
-│   ├── groq_cliente.py          # Cliente Groq compartido con fallback de API Keys (429)
-│   └── FASE1.py                 # [LEGACY] versión monolítica anterior (NO usada por app.py)
+│   └── asesoria.py              # Prompt del asesor + orquestación de la conversación
 │
 ├── producto/                    # FASE 3 — Búsqueda y venta de productos
 │   ├── producto.py              # Orquestador: extractor → database → vendedor
 │   ├── extractor.py             # Extrae el sustantivo clave del mensaje con IA
 │   ├── database.py              # Consulta el catálogo de productos en Turso
-│   ├── vendedor.py              # Genera la respuesta final de ventas con IA
-│   ├── groq_cliente.py          # Cliente Groq compartido con fallback de API Keys (429)
-│   └── FASE1.py                 # [LEGACY] versión monolítica anterior (NO usada por app.py)
+│   └── vendedor.py              # Genera la respuesta final de ventas con IA
 │
 ├── templates/
-│   └── index.html               # Interfaz web del chat + banner de debug
+│   └── index.html               # Interfaz web del chat
 │
 └── static/
-    ├── style.css                # Estilos (tema verde, burbujas, animaciones, banner debug)
+    ├── style.css                # Estilos (tema verde, burbujas, animaciones)
     └── script.js                # Lógica cliente: Fetch API, indicador de escritura, reset
 ```
 
@@ -71,8 +69,7 @@ Salus/
 | `main.py` | Módulo de la Fase Recepción (raíz del proyecto). |
 | `asesoria/asesoria.py`, `producto/producto.py` | Módulos de fase. Contienen el prompt del sistema y coordinan sus helpers. |
 | `producto/<verbo>or.py` (`extractor`, `vendedor`) | Helpers con una única responsabilidad dentro de la fase. |
-| `*/groq_cliente.py` | Cliente HTTP de Groq con fallback automático de API Keys. Duplicado por paquete (ver §8). |
-| `*/FASE1.py` | **Legacy.** Versiones monolíticas previas a la refactorización modular. No las importa `app.py`. |
+| `groq_cliente.py` (raíz) | Único cliente HTTP de Groq con fallback automático de API Keys. Lo usan todas las fases. |
 
 ---
 
@@ -116,8 +113,9 @@ El estado de la conversación vive en la **sesión de Flask**, lo que permite qu
    - `asesoria` → `asesoria.responder_asesoria(mensaje, historial)` devuelve `(respuesta, estado, producto_sugerido, historial)`. Si `estado == "producto_encontrado"`, se cambia a fase `producto`, se ejecuta la búsqueda de inmediato con `asyncio.run(...)` y el resultado se concatena a la respuesta de asesoría.
    - `producto` → cada mensaje del usuario dispara una nueva búsqueda (`asyncio.run(ejecutar_busqueda_producto(mensaje))`); esta fase no usa historial ni vuelve a recepción.
    - `historial` → placeholder inline en `app.py` (el módulo de expediente clínico aún no existe).
-4. **Respuesta:** JSON `{ "respuesta", "fase", "debug": { "fase", "modulo", "carpeta" } }`. El banner de debug del frontend se alimenta de `debug`.
-5. **Errores:** cualquier excepción se captura y se devuelve como JSON (nunca HTML), evitando que el frontend falle al parsear.
+4. **Respuesta:** JSON `{ "respuesta", "fase" }`.
+5. **Errores:** cualquier excepción se captura y se devuelve como JSON (nunca HTML), con un mensaje genérico al usuario; el detalle queda solo en los logs del servidor.
+6. **Rate limiting:** `/api/chat` está limitado a 30 peticiones/minuto y 500/día por IP. Al superarlo se devuelve `429` en JSON.
 
 ### C. Tabla de transiciones
 
@@ -145,11 +143,12 @@ El estado de la conversación vive en la **sesión de Flask**, lo que permite qu
 | Variable | Origen | Descripción |
 |----------|--------|-------------|
 | `API_KEYS` | `GROQ_API_KEYS` | Lista de keys de Groq separadas por coma (`"key1,key2,key3"`). Habilita el fallback ante HTTP 401 (key inválida) y 429 (rate limit). |
+| `MODELO` | `GROQ_MODEL` | Modelo Groq usado en todo el proyecto. Default: `openai/gpt-oss-20b`. |
 | `TURSO_URL` | `TURSO_URL` | URL de la base de datos Turso. |
 | `TURSO_TOKEN` | `TURSO_TOKEN` | Token de autenticación de Turso. |
-| `SECRET_KEY` | `SECRET_KEY` | Clave de firma de la cookie de sesión (default inseguro `cambia-esto-en-produccion`). |
+| `SECRET_KEY` | `SECRET_KEY` | Clave de firma de la cookie de sesión. **Obligatoria**, sin default. |
 
-- **`validar_config()`:** lanza `EnvironmentError` con el detalle de las variables faltantes. **Actualmente nadie la invoca** (ver §8, deuda técnica).
+- **`validar_config()`:** lanza `EnvironmentError` con el detalle de las variables faltantes. **Se invoca al importar `app.py`**: si falta alguna variable crítica, el arranque falla con un error claro en logs.
 
 ### [Fase 1] `main.py` — Recepcionista virtual
 
@@ -162,7 +161,7 @@ El estado de la conversación vive en la **sesión de Flask**, lo que permite qu
   - `"historial"` — pide explícitamente abrir/gestionar su expediente clínico.
 - **Regla estructural clave:** si la respuesta del bot contiene una pregunta, la intención DEBE ser `pendiente`. Nunca se asume la intención por mencionar un síntoma.
 - **Salida del modelo:** JSON estricto (`response_format={"type": "json_object"}`), `temperature=0.3`.
-- **Fallback de keys:** itera `API_KEYS`; ante `APIError` 401 o 429 espera 2 s y prueba la siguiente. Si todas fallan devuelve `("Error de API: ...", "error", historial)` (la sesión no cambia de fase).
+- **Fallback de keys:** delegado en `groq_cliente.py` (ver §4). Si todas las keys fallan, se registra el error en logs y se devuelve un mensaje genérico con estado `error` (la sesión no cambia de fase).
 
 ### [Fase 2] `asesoria/asesoria.py` — Asesor de salud
 
@@ -170,13 +169,13 @@ El estado de la conversación vive en la **sesión de Flask**, lo que permite qu
 - **Función principal:** `responder_asesoria(mensaje_usuario, historial) → (respuesta_ia, estado, producto_sugerido, historial_actualizado)`.
 - **Estados:** `"consultando"` (sigue indagando), `"producto_encontrado"` (ya recomendó y entrega el sustantivo clave para la BD), `"error"`.
 - **Prompt (`PROMPT_SISTEMA`):** preguntas amables de máximo 2 oraciones; al tener claro el diagnóstico comunica la recomendación y avisa que revisará stock. Salida JSON estricta, `temperature=0.3`.
-- **Delegación:** todas las llamadas al LLM pasan por `asesoria/groq_cliente.py`.
+- **Delegación:** todas las llamadas al LLM pasan por `groq_cliente.py` (raíz).
 
-### [Helper] `asesoria/groq_cliente.py` — Cliente Groq con fallback
+### [Helper] `groq_cliente.py` (raíz) — Cliente Groq compartido
 
-- **Propósito:** Centralizar la llamada a Groq y el manejo de rate limits para el paquete `asesoria`.
-- **Función:** `llamar_groq(messages, model="openai/gpt-oss-20b", temperature=0.3, response_format=None)`.
-- **Comportamiento:** recorre `API_KEYS` en orden; con `APIError` 401 o 429 y keys restantes espera 2 s y reintenta con la siguiente. Si todas fallan, **relanza** la excepción (el módulo de fase la captura y devuelve estado `error`).
+- **Propósito:** Único lugar que crea clientes Groq y maneja el fallback entre API keys. Lo consumen `main.py`, `asesoria/asesoria.py`, `producto/extractor.py` y `producto/vendedor.py`.
+- **Función:** `llamar_groq(messages, model=MODELO, temperature=0.3, response_format=None)`. `MODELO` se define en `config.py` (default `openai/gpt-oss-20b`, configurable con `GROQ_MODEL`).
+- **Comportamiento:** recorre `API_KEYS` en orden; ante `APIError` 401 (key inválida) o 429 (rate limit) espera 2 s y reintenta con la siguiente key. Si todas fallan, **relanza** la excepción (cada módulo de fase la captura, la registra en logs y devuelve un mensaje genérico con estado `error`).
 
 ### [Fase 3] `producto/producto.py` — Orquestador de productos
 
@@ -219,44 +218,44 @@ LIMIT 1
 - **Prompt (`PROMPT_VENDEDOR`):** inyecta el mensaje completo del cliente (el parámetro se llama `termino`, pero `producto.py` le pasa el mensaje original) y el JSON de resultados. Reglas: si la lista está vacía → disculpa cordial y sugerencia de reformular; si hay resultado → **solo** nombre, para qué sirve (1 frase), precio, disponibilidad y enlace; máximo 3-4 líneas; nada de dosis, contraindicaciones ni listas largas.
 - **Nota:** aunque la BD entrega dosis/contraindicaciones al prompt (viajan en el JSON), el prompt ordena no mostrarlas. `temperature=0.3`.
 
-### [Helper] `producto/groq_cliente.py` — Cliente Groq del paquete producto
+### ~~[Helper] `producto/groq_cliente.py`~~ (unificado)
 
-- Idéntico a `asesoria/groq_cliente.py` salvo que su `temperature` por defecto es `0` (la fase producto es factual, no conversacional). Misma estrategia de fallback 429 y de relanzar la excepción si todas las keys fallan.
+> [!NOTE]
+> Este helper fue eliminado: todas las fases usan el `groq_cliente.py` de la raíz. La fase producto pasa `temperature=0` explícitamente (es factual, no conversacional).
 
 ### [Servidor] `app.py` — Aplicación Flask
 
 - **Propósito:** Punto de entrada web, máquina de estados por sesión y serialización JSON.
-- **`FASE_INFO`:** mapa fase → `{carpeta, modulo}` usado por el banner de debug. La fase `producto` reporta la cadena `producto/producto.py → extractor.py → database.py → vendedor.py`; `historial` apunta a un módulo inexistente (deuda §8).
+- **Arranque:** `validar_config()` se ejecuta al importar el módulo; si faltan credenciales, la app no arranca (error claro en logs, en lugar de fallar en la primera petición).
+- **Rate limiting:** Flask-Limiter limita `/api/chat` a 30 req/minuto y 500/día por IP (almacenamiento en memoria, por worker), protegiendo la cuota gratuita de Groq.
+- **Seguridad de sesión:** cookies `HttpOnly`, `SameSite=Lax` y `Secure` activado en Render (`RENDER` presente en el entorno).
 - **Rutas:**
 
 | Método y ruta | Descripción |
 |---------------|-------------|
 | `GET /` | Inicializa la sesión si está vacía y renderiza `templates/index.html`. |
-| `POST /api/chat` | Recibe `{"mensaje": "..."}`, despacha según `session['fase']` y devuelve la respuesta + `debug`. |
+| `POST /api/chat` | Recibe `{"mensaje": "..."}`, despacha según `session['fase']`. Limitado a 30 req/min y 500/día por IP. |
 | `POST /api/reset` | `session.clear()`; devuelve `{"status": "ok"}`. |
 
-- **Sesión:** `app.secret_key = os.environ.get("SECRET_KEY", "natures-green-secret-2026")`. **No** importa `config.SECRET_KEY` (default distinto al de `config.py`; ver §8).
-- **Handlers globales (`@app.errorhandler`):** `404`, `500` y `Exception` genérico devuelven siempre JSON con clave `respuesta`. El handler genérico imprime el traceback en consola con el prefijo `[EXCEPCIÓN NO MANEJADA]`.
+- **Sesión:** `app.secret_key = config.SECRET_KEY` (única fuente). Al ser obligatoria, `validar_config()` garantiza que nunca se firme con un default público.
+- **Handlers globales (`@app.errorhandler`):** `404`, `429`, `500` y `Exception` genérico devuelven siempre JSON con clave `respuesta`. Al usuario se le muestra un mensaje genérico; el traceback se imprime en logs con el prefijo `[EXCEPCIÓN NO MANEJADA]` o `[ERROR en /api/chat]`.
 - **Timing del cambio de fase:** en asesoría, `session['fase'] = 'producto'` se fija **antes** de ejecutar la búsqueda; así el siguiente mensaje del usuario ya entra directo a la fase producto aunque la búsqueda falle.
 
 ### [Frontend] `templates/index.html` + `static/`
 
-- **`index.html`:** layout de chat (header con marca SALUS, botón de reset, mensajes, formulario de entrada) y **banner de debug** fijo arriba con `Fase`, `Módulo` y `Carpeta` (ids `debug-fase`, `debug-modulo`, `debug-carpeta`). Carga la fuente Outfit de Google Fonts.
+- **`index.html`:** layout de chat (header con marca SALUS, botón de reset, mensajes, formulario de entrada) y favicon inline (SVG ⚕️). Carga la fuente Outfit de Google Fonts.
 - **`script.js`:**
   - Envía el mensaje con `fetch('/api/chat')` y renderiza la respuesta del bot.
   - Indicador de escritura animado (3 puntos) mientras espera.
   - Convierte cualquier URL de la respuesta en un enlace con texto `Ver Producto` (`target="_blank"`).
-  - Actualiza el banner de debug con `data.debug` de cada respuesta.
   - Botón de reset con `confirm()` → `POST /api/reset` y limpia el DOM.
   - Bloquea input y botón de envío durante la petición (evita dobles envíos).
-- **`style.css`:** tema verde (`--primary: #10b981`), variables CSS en `:root`, glassmorphism suave (`rgba` + blur), animaciones `fadeIn` / `pulse` / `typing`, burbujas diferenciadas para usuario/bot/sistema, estilos del banner de debug y scrollbar personalizada.
+- **`style.css`:** tema verde (`--primary: #10b981`), variables CSS en `:root`, glassmorphism suave (`rgba` + blur), animaciones `fadeIn` / `pulse` / `typing`, burbujas diferenciadas para usuario/bot/sistema y scrollbar personalizada.
 
-### [Legacy] `asesoria/FASE1.py` y `producto/FASE1.py`
+### ~~[Legacy] `*/FASE1.py`, `asesoria/groq_cliente.py`, `producto/groq_cliente.py`~~ (eliminados)
 
-- Versiones **monolíticas** previas a la refactorización. Incluyen su propio cliente Groq (`llamar_groq_completions`) y toda la lógica en un solo archivo.
-- **No son importadas por `app.py`** (este importa `asesoria.asesoria` y `producto.producto`). Se conservan como respaldo.
-- `producto/FASE1.py` incluye un menú de prueba por consola (`python producto/FASE1.py`, escribe `salir` para terminar) con la lógica original de `ejecutar_fase_2`.
-- **Recomendación:** eliminarlas o moverlas a una carpeta `legacy/` para evitar confusión (ver §8).
+> [!NOTE]
+> Los módulos monolíticos `FASE1.py` y los clientes Groq duplicados por paquete fueron **eliminados** del proyecto. La lógica vigente es la refactorizada (`asesoria/asesoria.py`, `producto/producto.py`, `groq_cliente.py` raíz). Si se necesitan como referencia, siguen disponibles en el historial de Git.
 
 ---
 
@@ -305,17 +304,12 @@ Columnas consultadas por `producto/database.py` (el esquema completo de la tabla
 ```json
 {
   "respuesta": "Texto que se muestra al usuario",
-  "fase": "recepcion | asesoria | producto | historial",
-  "debug": {
-    "fase": "producto",
-    "modulo": "producto/producto.py → extractor.py → database.py → vendedor.py",
-    "carpeta": "producto/"
-  }
+  "fase": "recepcion | asesoria | producto | historial"
 }
 ```
 
-> [!WARNING]
-> La rama `historial` y la rama defensiva `else` de `app.py` **no incluyen** la clave `debug`, a diferencia del helper `ok()` usado por el resto de fases. El frontend tolera su ausencia (`if (!debug) return;`), pero es una inconsistencia conocida (ver §8).
+> [!NOTE]
+> Todas las ramas de `app.py` devuelven exactamente el mismo formato (`respuesta` + `fase`). El banner de debug se eliminó en la sesión de endurecimiento.
 
 ### D. Estado de sesión (`session`)
 
@@ -335,10 +329,10 @@ Columnas consultadas por `producto/database.py` (el esquema completo de la tabla
 2. **Aislamiento por fase:** al cambiar de fase se descarta el historial anterior. Recepción, Asesoría y Producto usan prompts de sistema distintos; mezclarlos degradaría la calidad de la conversación.
 3. **Asesoría con búsqueda inmediata:** cuando el asesor confirma `producto_encontrado`, SALUS ejecuta la búsqueda sin esperar un mensaje adicional y **concatena** la recomendación + el resultado comercial en una sola burbuja (`respuesta_ia + "\n\n" + resultado`). Si la búsqueda falla, se devuelve solo la recomendación (el error no se filtra al cliente).
 4. **Venta directa y minimalista:** el vendedor solo expone nombre, utilidad, precio, disponibilidad y enlace. Dosis, contraindicaciones y advertencias **no** se muestran en el chat (aunque la IA las recibe como contexto), lo que reduce el riesgo de dar indicaciones médicas erróneas.
-5. **Rotación de API Keys ante 401/429:** los tres clientes (`main.py`, `asesoria/groq_cliente.py`, `producto/groq_cliente.py`) recorren `API_KEYS` en orden y esperan 2 s entre intentos. El 401 (key inválida o revocada) también dispara el salto a la siguiente key, no solo el 429 (rate limit). Garantiza estabilidad en la capa gratuita de Groq.
+5. **Rotación de API Keys ante 401/429:** el cliente único `groq_cliente.py` recorre `API_KEYS` en orden y espera 2 s entre intentos. El 401 (key inválida o revocada) también dispara el salto a la siguiente key, no solo el 429 (rate limit). Garantiza estabilidad en la capa gratuita de Groq.
 6. **Salida JSON estricta:** recepción, asesoría y extracción usan `response_format={"type": "json_object"}` y parsean con `json.loads`. El contrato de cada prompt es parte del código: cambiarlo exige actualizar el parseo en el mismo commit.
 7. **Errores siempre en JSON:** los handlers globales de `app.py` impiden que Flask devuelva HTML de error, lo que rompería el `response.json()` del frontend.
-8. **Debug Banner en fase de pruebas:** cada respuesta informa fase, módulo y carpeta activos. Es información de desarrollo; al retirarlo debe eliminarse también `FASE_INFO` en `app.py` y el bloque HTML asociado.
+8. **Protección de cuota:** el endpoint público `/api/chat` está limitado por IP (30 req/min, 500/día) y los errores internos nunca se muestran al usuario; ambos cambios protegen la cuota gratuita de Groq y evitan filtrar detalles internos.
 9. **Fase Producto terminal:** una vez en `producto`, cada mensaje se interpreta como una nueva búsqueda; la única forma de volver a recepción es `POST /api/reset` (botón ↺) o una sesión nueva.
 10. **Fase Historial pendiente:** responde con un mensaje informativo desde `app.py`. No existe carpeta `historial/` ni módulo `historial.py` todavía.
 
@@ -364,7 +358,7 @@ pip install -r requirements.txt
 ### B. Variables de entorno
 
 1. Copiar `.env.example` a `.env`.
-2. Completar: `GROQ_API_KEYS` (una o más keys separadas por coma), `TURSO_URL`, `TURSO_TOKEN` y `SECRET_KEY`.
+2. Completar: `GROQ_API_KEYS` (una o más keys separadas por coma), `TURSO_URL`, `TURSO_TOKEN` y `SECRET_KEY` (obligatoria; genera una con `python -c "import secrets; print(secrets.token_hex(32))"`). Opcional: `GROQ_MODEL` para cambiar el modelo.
 
 > [!IMPORTANT]
 > `.env` está en `.gitignore`: nunca se sube al repositorio. En **Render**, definir las mismas variables en *Dashboard → Environment*.
@@ -372,9 +366,10 @@ pip install -r requirements.txt
 | Variable | Requerida | Ejemplo | Descripción |
 |----------|-----------|---------|-------------|
 | `GROQ_API_KEYS` | Sí | `gsk_abc,gsk_def` | Keys separadas por coma; se rotan ante 401/429. |
+| `GROQ_MODEL` | No | `openai/gpt-oss-20b` | Modelo Groq a usar. Si se omite, usa el default. |
 | `TURSO_URL` | Sí | `https://tu-db.turso.io` | URL de la base Turso. |
 | `TURSO_TOKEN` | Sí | `eyJhbGci…` | Token de Turso. |
-| `SECRET_KEY` | Recomendada | `frase-larga-y-secreta` | Firma de la cookie de sesión. Sin ella se usa un default inseguro. |
+| `SECRET_KEY` | Sí | `token_hex(32)` | Firma de la cookie de sesión. Sin ella la app no arranca. |
 
 ### C. Ejecución local
 
@@ -385,7 +380,7 @@ python app.py
 
 ### D. Ejecución en producción (Render)
 
-- El `Procfile` ya define el comando: `web: gunicorn app:app`.
+- El `Procfile` ya define el comando: `web: gunicorn app:app --workers 2 --threads 4 --timeout 120` (el timeout amplio evita cortes cuando el LLM tarda o la instancia despierta).
 - Render inyecta las variables de entorno; `load_dotenv()` no encuentra `.env` y no hace nada.
 - El plan gratuito puede **dormir** la instancia: la primera petición tras inactividad tarda unos segundos.
 - **Despliegue automático:** el servicio de Render está conectado al repositorio GitHub (`Leecsito/Salus`). Con *Auto-Deploy* en **On Commit** (Dashboard → servicio → Settings → Build & Deploy), cada `git push` a la rama `main` dispara un redespliegue: **no hace falta ningún archivo adicional ni desplegar a mano**.
@@ -409,26 +404,27 @@ curl -b cookies.txt -c cookies.txt -X POST http://127.0.0.1:5000/api/chat \
 curl -b cookies.txt -X POST http://127.0.0.1:5000/api/reset
 ```
 
-### F. Prueba aislada del módulo de productos (legacy)
-
-```bash
-python producto/FASE1.py
-# Menú interactivo de consola; escribe 'salir' para terminar.
-```
-
 ---
 
 ## 8. Deuda Técnica y Buenas Prácticas
 
-1. **Módulos legacy duplicados:** `asesoria/FASE1.py` y `producto/FASE1.py` replican la lógica ya refactorizada y pueden confundir a futuros desarrolladores (¿cuál es la versión vigente?). Acción sugerida: eliminarlos o moverlos a `legacy/` conservando únicamente el menú de prueba si se desea.
-2. **`groq_cliente.py` duplicado:** el mismo cliente con fallback existe en `asesoria/` y `producto/` (solo cambia el `temperature` por defecto). Acción sugerida: un único `groq_cliente.py` en la raíz.
-3. **`validar_config()` sin uso:** `config.py` define la validación de variables críticas, pero nadie la llama al arrancar. Si faltan credenciales, el error aparece recién en la primera petición. Acción sugerida: invocarla en `app.py` (solo en el proceso servidor, nunca en el import de módulos de test).
-4. **`SECRET_KEY` duplicada y desincronizada:** `app.py` lee `os.environ.get("SECRET_KEY", "natures-green-secret-2026")` con un default distinto al de `config.py` (`"cambia-esto-en-produccion"`). Acción sugerida: `from config import SECRET_KEY` en `app.py`.
-5. **Rama `historial` incompleta:** no existe el módulo prometido por `FASE_INFO` (`historial/historial.py`). Además, sus respuestas no incluyen la clave `debug`, a diferencia del helper `ok()`. Acción sugerida: implementar el módulo o unificar el formato de respuesta.
-6. **`LIMIT 1` en la búsqueda:** el usuario solo ve el primer producto que coincide con el término; si el primero no es el que esperaba, no hay alternativas. Acción sugerida: parametrizar el límite y dejar que el vendedor liste 2-3 opciones.
-7. **Historial sin truncado:** en conversaciones largas, `session['historial']` crece sin límite (límite práctico: tamaño de la cookie de sesión, ~4 KB). Acción sugerida: recortar a los últimos N turnos.
-8. **Sin pruebas automatizadas ni CI:** no hay tests unitarios de los prompts/parseos ni pipeline de verificación. Acción sugerida: tests de contrato para `responder_recepcion`, `responder_asesoria` y `buscar_producto` con mocks de Groq/Turso.
-9. **Fallback 429 sin backoff exponencial:** se espera un `time.sleep(2)` fijo por key. Es aceptable en la capa gratuita, pero un backoff creciente sería más robusto.
+**Resueltas en la sesión de endurecimiento (2026-10):**
+
+- Módulos legacy `*/FASE1.py` y clientes `groq_cliente.py` duplicados: **eliminados**; el cliente es único en la raíz.
+- `validar_config()`: ahora se invoca al arrancar `app.py`.
+- `SECRET_KEY`: única fuente en `config.py`, obligatoria y sin default inseguro.
+- Banner de debug: eliminado del frontend y de las respuestas JSON.
+- Errores internos: ya no se exponen al usuario (solo mensajes genéricos; detalle en logs).
+- Rate limiting por IP en `/api/chat` y timeout/workers de Gunicorn configurados.
+- `requirements.txt` con versiones fijadas.
+
+**Pendientes:**
+
+1. **Rama `historial` incompleta:** responde con un mensaje informativo inline en `app.py`; no existe carpeta `historial/` ni `historial.py`. Acción sugerida: implementar el módulo.
+2. **`LIMIT 1` en la búsqueda:** el usuario solo ve el primer producto que coincide con el término; si el primero no es el que esperaba, no hay alternativas. Acción sugerida: parametrizar el límite y dejar que el vendedor liste 2-3 opciones.
+3. **Historial sin truncado:** en conversaciones largas, `session['historial']` crece sin límite (límite práctico: tamaño de la cookie de sesión, ~4 KB). Acción sugerida: recortar a los últimos N turnos.
+4. **Sin pruebas automatizadas ni CI:** no hay tests unitarios de los prompts/parseos ni pipeline de verificación. Acción sugerida: tests de contrato para `responder_recepcion`, `responder_asesoria` y `buscar_producto` con mocks de Groq/Turso.
+5. **Fallback 429 sin backoff exponencial:** se espera un `time.sleep(2)` fijo por key. Es aceptable en la capa gratuita, pero un backoff creciente sería más robusto.
 
 ---
 

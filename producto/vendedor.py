@@ -4,7 +4,7 @@ Responsabilidad: tomar los resultados de la BD y generar una respuesta
 natural, directa y orientada a la venta usando el modelo de Groq.
 """
 import json
-from producto.groq_cliente import llamar_groq
+from groq_cliente import llamar_groq
 
 PROMPT_VENDEDOR = """Eres el vendedor de Nature's Green.
 El cliente busca: "{termino}".

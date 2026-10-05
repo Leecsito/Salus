@@ -1,5 +1,6 @@
-flask
-gunicorn
-groq
-libsql-client
-python-dotenv
+Flask==3.1.3
+Flask-Limiter==4.1.1
+gunicorn==26.2.0
+groq==1.7.0
+libsql-client==0.3.1
+python-dotenv==1.2.3
