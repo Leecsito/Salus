@@ -53,7 +53,7 @@ def responder_recepcion(mensaje_usuario: str, historial: list):
         try:
             cliente = obtener_cliente(key_index)
             respuesta_api = cliente.chat.completions.create(
-                model="llama-3.1-8b-instant",
+                model="openai/gpt-oss-20b",
                 messages=historial,
                 temperature=0.3,
                 response_format={"type": "json_object"}
@@ -68,7 +68,7 @@ def responder_recepcion(mensaje_usuario: str, historial: list):
             return respuesta_ia, intencion, historial
             
         except APIError as e:
-            if getattr(e, 'status_code', None) == 429 and intento < len(API_KEYS) - 1:
+            if getattr(e, 'status_code', None) in (401, 429) and intento < len(API_KEYS) - 1:
                 time.sleep(2)
                 continue
             return f"Error de API: {e}", "error", historial

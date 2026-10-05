@@ -11,7 +11,7 @@ from config import API_KEYS
 def obtener_cliente(indice_key: int) -> Groq:
     return Groq(api_key=API_KEYS[indice_key])
 
-def llamar_groq_completions(messages, model="llama-3.1-8b-instant", temperature=0.3, response_format=None):
+def llamar_groq_completions(messages, model="openai/gpt-oss-20b", temperature=0.3, response_format=None):
     for intento, key_index in enumerate(range(len(API_KEYS))):
         try:
             cliente = obtener_cliente(key_index)
@@ -26,7 +26,7 @@ def llamar_groq_completions(messages, model="llama-3.1-8b-instant", temperature=
             respuesta = cliente.chat.completions.create(**kwargs)
             return respuesta
         except APIError as e:
-            if getattr(e, 'status_code', None) == 429 and intento < len(API_KEYS) - 1:
+            if getattr(e, 'status_code', None) in (401, 429) and intento < len(API_KEYS) - 1:
                 time.sleep(2)
                 continue
             raise e

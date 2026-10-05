@@ -19,7 +19,7 @@ def extraer_termino(mensaje: str) -> str:
     Retorna string vacío si no se pudo identificar ningún producto.
     """
     respuesta = llamar_groq(
-        model="llama-3.1-8b-instant",
+        model="openai/gpt-oss-20b",
         messages=[
             {"role": "system", "content": PROMPT_EXTRACCION},
             {"role": "user",   "content": mensaje}

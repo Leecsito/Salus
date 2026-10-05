@@ -28,7 +28,7 @@ def generar_respuesta_vendedor(termino: str, resultados_db: list) -> str:
         resultados=json.dumps(resultados_db, ensure_ascii=False)
     )
     respuesta = llamar_groq(
-        model="llama-3.1-8b-instant",
+        model="openai/gpt-oss-20b",
         messages=[{"role": "system", "content": prompt}],
         temperature=0.3
     )

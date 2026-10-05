@@ -18,14 +18,14 @@
 | **Lenguaje base** | Python 3.11 | Núcleo del servidor y de los módulos de IA |
 | **Framework web** | Flask 3.x | Rutas HTTP, sesiones, renderizado de plantillas |
 | **Servidor de producción** | Gunicorn | `Procfile`: `web: gunicorn app:app` (Render) |
-| **IA / LLM** | Llama 3.1 8B Instant (API de **Groq**, SDK `groq`) | Clasificación de intenciones, diálogo de asesoría, extracción del término y generación de respuestas |
+| **IA / LLM** | GPT-OSS 20B (API de **Groq**, SDK `groq`) | Clasificación de intenciones, diálogo de asesoría, extracción del término y generación de respuestas |
 | **Base de datos** | **Turso** (SQLite serverless) vía `libsql-client` | Catálogo de productos de Nature's Green |
 | **Configuración** | `python-dotenv` + variables de entorno | Credenciales y secretos (única fuente: `config.py`) |
 | **Estado de sesión** | Flask `session` (cookie cifrada con `SECRET_KEY`) | Guarda `fase` actual e `historial` de mensajes entre peticiones HTTP |
 | **Frontend** | HTML5, CSS3 vanilla, JavaScript (Fetch API) | Interfaz de chat con banner de debug |
 | **Hosting** | **Render** (plan gratuito) | Despliegue desde Git con Gunicorn |
 
-Modelo Groq usado en todo el proyecto: `llama-3.1-8b-instant`.
+Modelo Groq usado en todo el proyecto: `openai/gpt-oss-20b`.
 
 ---
 
@@ -144,7 +144,7 @@ El estado de la conversación vive en la **sesión de Flask**, lo que permite qu
 
 | Variable | Origen | Descripción |
 |----------|--------|-------------|
-| `API_KEYS` | `GROQ_API_KEYS` | Lista de keys de Groq separadas por coma (`"key1,key2,key3"`). Habilita el fallback ante HTTP 429. |
+| `API_KEYS` | `GROQ_API_KEYS` | Lista de keys de Groq separadas por coma (`"key1,key2,key3"`). Habilita el fallback ante HTTP 401 (key inválida) y 429 (rate limit). |
 | `TURSO_URL` | `TURSO_URL` | URL de la base de datos Turso. |
 | `TURSO_TOKEN` | `TURSO_TOKEN` | Token de autenticación de Turso. |
 | `SECRET_KEY` | `SECRET_KEY` | Clave de firma de la cookie de sesión (default inseguro `cambia-esto-en-produccion`). |
@@ -162,7 +162,7 @@ El estado de la conversación vive en la **sesión de Flask**, lo que permite qu
   - `"historial"` — pide explícitamente abrir/gestionar su expediente clínico.
 - **Regla estructural clave:** si la respuesta del bot contiene una pregunta, la intención DEBE ser `pendiente`. Nunca se asume la intención por mencionar un síntoma.
 - **Salida del modelo:** JSON estricto (`response_format={"type": "json_object"}`), `temperature=0.3`.
-- **Fallback de keys:** itera `API_KEYS`; ante `APIError` 429 espera 2 s y prueba la siguiente. Si todas fallan devuelve `("Error de API: ...", "error", historial)` (la sesión no cambia de fase).
+- **Fallback de keys:** itera `API_KEYS`; ante `APIError` 401 o 429 espera 2 s y prueba la siguiente. Si todas fallan devuelve `("Error de API: ...", "error", historial)` (la sesión no cambia de fase).
 
 ### [Fase 2] `asesoria/asesoria.py` — Asesor de salud
 
@@ -175,8 +175,8 @@ El estado de la conversación vive en la **sesión de Flask**, lo que permite qu
 ### [Helper] `asesoria/groq_cliente.py` — Cliente Groq con fallback
 
 - **Propósito:** Centralizar la llamada a Groq y el manejo de rate limits para el paquete `asesoria`.
-- **Función:** `llamar_groq(messages, model="llama-3.1-8b-instant", temperature=0.3, response_format=None)`.
-- **Comportamiento:** recorre `API_KEYS` en orden; con `APIError` 429 y keys restantes espera 2 s y reintenta con la siguiente. Si todas fallan, **relanza** la excepción (el módulo de fase la captura y devuelve estado `error`).
+- **Función:** `llamar_groq(messages, model="openai/gpt-oss-20b", temperature=0.3, response_format=None)`.
+- **Comportamiento:** recorre `API_KEYS` en orden; con `APIError` 401 o 429 y keys restantes espera 2 s y reintenta con la siguiente. Si todas fallan, **relanza** la excepción (el módulo de fase la captura y devuelve estado `error`).
 
 ### [Fase 3] `producto/producto.py` — Orquestador de productos
 
@@ -335,7 +335,7 @@ Columnas consultadas por `producto/database.py` (el esquema completo de la tabla
 2. **Aislamiento por fase:** al cambiar de fase se descarta el historial anterior. Recepción, Asesoría y Producto usan prompts de sistema distintos; mezclarlos degradaría la calidad de la conversación.
 3. **Asesoría con búsqueda inmediata:** cuando el asesor confirma `producto_encontrado`, SALUS ejecuta la búsqueda sin esperar un mensaje adicional y **concatena** la recomendación + el resultado comercial en una sola burbuja (`respuesta_ia + "\n\n" + resultado`). Si la búsqueda falla, se devuelve solo la recomendación (el error no se filtra al cliente).
 4. **Venta directa y minimalista:** el vendedor solo expone nombre, utilidad, precio, disponibilidad y enlace. Dosis, contraindicaciones y advertencias **no** se muestran en el chat (aunque la IA las recibe como contexto), lo que reduce el riesgo de dar indicaciones médicas erróneas.
-5. **Rotación de API Keys ante rate limit (429):** los tres clientes (`main.py`, `asesoria/groq_cliente.py`, `producto/groq_cliente.py`) recorren `API_KEYS` en orden y esperan 2 s entre intentos. Garantiza estabilidad en la capa gratuita de Groq.
+5. **Rotación de API Keys ante 401/429:** los tres clientes (`main.py`, `asesoria/groq_cliente.py`, `producto/groq_cliente.py`) recorren `API_KEYS` en orden y esperan 2 s entre intentos. El 401 (key inválida o revocada) también dispara el salto a la siguiente key, no solo el 429 (rate limit). Garantiza estabilidad en la capa gratuita de Groq.
 6. **Salida JSON estricta:** recepción, asesoría y extracción usan `response_format={"type": "json_object"}` y parsean con `json.loads`. El contrato de cada prompt es parte del código: cambiarlo exige actualizar el parseo en el mismo commit.
 7. **Errores siempre en JSON:** los handlers globales de `app.py` impiden que Flask devuelva HTML de error, lo que rompería el `response.json()` del frontend.
 8. **Debug Banner en fase de pruebas:** cada respuesta informa fase, módulo y carpeta activos. Es información de desarrollo; al retirarlo debe eliminarse también `FASE_INFO` en `app.py` y el bloque HTML asociado.
@@ -371,7 +371,7 @@ pip install -r requirements.txt
 
 | Variable | Requerida | Ejemplo | Descripción |
 |----------|-----------|---------|-------------|
-| `GROQ_API_KEYS` | Sí | `gsk_abc,gsk_def` | Keys separadas por coma; se rotan ante 429. |
+| `GROQ_API_KEYS` | Sí | `gsk_abc,gsk_def` | Keys separadas por coma; se rotan ante 401/429. |
 | `TURSO_URL` | Sí | `https://tu-db.turso.io` | URL de la base Turso. |
 | `TURSO_TOKEN` | Sí | `eyJhbGci…` | Token de Turso. |
 | `SECRET_KEY` | Recomendada | `frase-larga-y-secreta` | Firma de la cookie de sesión. Sin ella se usa un default inseguro. |
