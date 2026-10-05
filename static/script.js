@@ -119,10 +119,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const logEntries = document.getElementById('log-entries');
     const logClose   = document.getElementById('log-close');
     const logClear   = document.getElementById('log-clear');
+    const logCopy    = document.getElementById('log-copy');
     const logAuto    = document.getElementById('log-autoscroll');
     const logStatus  = document.getElementById('log-status');
 
     let logTimer = null;
+    let ultimasEntradas = [];
 
     // Token opcional: viaja en la URL (?log_token=...) y se guarda en la pestaña
     const params = new URLSearchParams(window.location.search);
@@ -141,6 +143,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderAviso(mensaje) {
+        ultimasEntradas = [];
         logEntries.textContent = '';
         const aviso = document.createElement('div');
         aviso.className = 'log-empty';
@@ -149,6 +152,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderLogs(entradas) {
+        ultimasEntradas = entradas;
         logEntries.textContent = '';
         if (!entradas.length) {
             renderAviso('Sin actividad todavía.');
@@ -218,6 +222,37 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     logClear.addEventListener('click', () => {
+        ultimasEntradas = [];
         logEntries.textContent = '';
     });
+
+    async function copiarLogs() {
+        const texto = ultimasEntradas
+            .map(e => `[${e.ts}] ${e.nivel} ${e.modulo}: ${e.mensaje}`)
+            .join('\n');
+
+        if (!texto) {
+            logCopy.textContent = 'Vacío';
+            setTimeout(() => { logCopy.textContent = 'Copiar'; }, 1200);
+            return;
+        }
+
+        try {
+            await navigator.clipboard.writeText(texto);
+        } catch (error) {
+            const area = document.createElement('textarea');
+            area.value = texto;
+            area.style.position = 'fixed';
+            area.style.opacity = '0';
+            document.body.appendChild(area);
+            area.select();
+            document.execCommand('copy');
+            area.remove();
+        }
+
+        logCopy.textContent = 'Copiado ✓';
+        setTimeout(() => { logCopy.textContent = 'Copiar'; }, 1500);
+    }
+
+    logCopy.addEventListener('click', copiarLogs);
 });

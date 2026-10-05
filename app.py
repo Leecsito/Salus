@@ -163,14 +163,11 @@ def chat():
 def ver_logs():
     """
     Expone las últimas entradas del buffer de logs para el panel de depuración.
-    En local está abierto; en Render exige la variable LOGS_TOKEN.
+    Abierto por defecto; si se define LOGS_TOKEN, exige ?token=... para verlo.
     """
     token = os.environ.get("LOGS_TOKEN", "")
-    if token:
-        if request.args.get("token", "") != token:
-            return jsonify({"respuesta": "Token de logs inválido."}), 403
-    elif os.environ.get("RENDER"):
-        return jsonify({"respuesta": "Logs deshabilitados en producción: define LOGS_TOKEN en Render."}), 404
+    if token and request.args.get("token", "") != token:
+        return jsonify({"respuesta": "Token de logs inválido."}), 403
 
     limite_arg = request.args.get("limit", "100")
     limite = int(limite_arg) if limite_arg.isdigit() else 100
