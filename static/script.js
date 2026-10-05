@@ -140,13 +140,18 @@ document.addEventListener('DOMContentLoaded', () => {
         return celda;
     }
 
+    function renderAviso(mensaje) {
+        logEntries.textContent = '';
+        const aviso = document.createElement('div');
+        aviso.className = 'log-empty';
+        aviso.textContent = mensaje;
+        logEntries.appendChild(aviso);
+    }
+
     function renderLogs(entradas) {
         logEntries.textContent = '';
         if (!entradas.length) {
-            const vacio = document.createElement('div');
-            vacio.className = 'log-empty';
-            vacio.textContent = 'Sin actividad todavía.';
-            logEntries.appendChild(vacio);
+            renderAviso('Sin actividad todavía.');
             return;
         }
         for (const entrada of entradas) {
@@ -176,12 +181,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 logStatus.className = 'log-status ok';
                 renderLogs(datos.logs || []);
             } else {
-                logStatus.textContent = datos.respuesta || 'no disponible';
+                logStatus.textContent = respuesta.status === 403 ? 'falta token' : 'deshabilitado';
                 logStatus.className = 'log-status error';
+                renderAviso(datos.respuesta || 'Logs no disponibles.');
             }
         } catch (error) {
             logStatus.textContent = 'sin conexión';
             logStatus.className = 'log-status error';
+            renderAviso('No se pudo conectar con /api/logs.');
         }
     }
 
