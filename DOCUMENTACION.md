@@ -17,13 +17,14 @@
 |------|------------|-----------|
 | **Lenguaje base** | Python 3.11 | Núcleo del servidor y de los módulos de IA |
 | **Framework web** | Flask 3.x | Rutas HTTP, sesiones, renderizado de plantillas |
-| **Servidor de producción** | Gunicorn | `Procfile`: `web: gunicorn app:app --workers 2 --threads 4 --timeout 120` (Render) |
+| **Servidor de producción** | Gunicorn | `Procfile`: `web: gunicorn app:app --workers 1 --threads 8 --timeout 120` (Render) |
 | **IA / LLM** | GPT-OSS 20B (API de **Groq**, SDK `groq`) | Clasificación de intenciones, diálogo de asesoría, extracción del término y generación de respuestas |
 | **Base de datos** | **Turso** (SQLite serverless) vía `libsql-client` | Catálogo de productos de Nature's Green |
 | **Configuración** | `python-dotenv` + variables de entorno | Credenciales y secretos (única fuente: `config.py`) |
 | **Estado de sesión** | Flask `session` (cookie cifrada con `SECRET_KEY`) | Guarda `fase` actual e `historial` de mensajes entre peticiones HTTP |
 | **Frontend** | HTML5, CSS3 vanilla, JavaScript (Fetch API) | Interfaz de chat minimalista |
 | **Protección** | Flask-Limiter | Límite de peticiones por IP en `/api/chat` (protege la cuota de Groq) |
+| **Observabilidad** | `logging` estándar + buffer en memoria + panel en el frontend | Traza cada petición: módulo, prompt/modelo, key usada, tiempos, decisiones y errores |
 | **Hosting** | **Render** (plan gratuito) | Despliegue desde Git con Gunicorn |
 
 Modelo Groq usado en todo el proyecto: `openai/gpt-oss-20b`.
@@ -39,6 +40,7 @@ Salus/
 ├── main.py                      # Fase Recepción: recepcionista virtual (clasifica intención)
 ├── groq_cliente.py              # Cliente Groq único: fallback de API Keys ante 401/429
 ├── config.py                    # Configuración central: único lugar que lee variables de entorno
+├── logs.py                      # Logging profesional: consola + buffer en memoria para /api/logs
 ├── Procfile                     # Instrucción de arranque para Render (gunicorn con timeout/workers)
 ├── requirements.txt             # Dependencias Python del proyecto (versiones fijadas)
 ├── .env.example                 # Plantilla de variables de entorno para desarrollo local
@@ -70,6 +72,7 @@ Salus/
 | `asesoria/asesoria.py`, `producto/producto.py` | Módulos de fase. Contienen el prompt del sistema y coordinan sus helpers. |
 | `producto/<verbo>or.py` (`extractor`, `vendedor`) | Helpers con una única responsabilidad dentro de la fase. |
 | `groq_cliente.py` (raíz) | Único cliente HTTP de Groq con fallback automático de API Keys. Lo usan todas las fases. |
+| `logs.py` (raíz) | Configuración de logging y buffer en memoria que alimenta el panel de logs del frontend. |
 
 ---
 
@@ -176,6 +179,16 @@ El estado de la conversación vive en la **sesión de Flask**, lo que permite qu
 - **Propósito:** Único lugar que crea clientes Groq y maneja el fallback entre API keys. Lo consumen `main.py`, `asesoria/asesoria.py`, `producto/extractor.py` y `producto/vendedor.py`.
 - **Función:** `llamar_groq(messages, model=MODELO, temperature=0.3, response_format=None)`. `MODELO` se define en `config.py` (default `openai/gpt-oss-20b`, configurable con `GROQ_MODEL`).
 - **Comportamiento:** recorre `API_KEYS` en orden; ante `APIError` 401 (key inválida) o 429 (rate limit) espera 2 s y reintenta con la siguiente key. Si todas fallan, **relanza** la excepción (cada módulo de fase la captura, la registra en logs y devuelve un mensaje genérico con estado `error`).
+- **Trazabilidad:** registra en logs la key usada (enmascarada, nunca completa), el modelo, la temperatura, si pide JSON, la latencia de cada llamada y cada rotación de key (`WARNING`).
+
+### [Sistema] `logs.py` — Logging y panel de depuración
+
+- **Propósito:** trazar el recorrido de cada mensaje para pulir el chat: qué módulo entra, qué prompt y modelo actúan, qué decide la IA, cuánto tarda y dónde falla.
+- **Destinos:** consola (Render) con formato `[hora] NIVEL módulo mensaje`, y un buffer circular en memoria (`deque`, últimas `LOGS_BUFFER` entradas, default 500) expuesto por `GET /api/logs`.
+- **Módulos registrados:** `salus.app`, `salus.recepcion`, `salus.asesoria`, `salus.producto`, `salus.extractor`, `salus.vendedor`, `salus.turso`, `salus.groq`.
+- **Seguridad:** las API keys se enmascaran (`gsk_XXXXX…XXXX`); los textos se recortan a 160–200 caracteres; el buffer nunca se escribe a disco.
+- **Niveles:** `INFO` para el flujo normal (prompt, key, decisión, tiempos), `WARNING` para rotaciones de key o búsquedas sin resultados, `ERROR` para excepciones con traceback en consola.
+- **Variables:** `LOG_LEVEL` (default `INFO`), `LOGS_BUFFER` (default `500`), `LOGS_TOKEN` (ver §7).
 
 ### [Fase 3] `producto/producto.py` — Orquestador de productos
 
@@ -227,14 +240,16 @@ LIMIT 1
 
 - **Propósito:** Punto de entrada web, máquina de estados por sesión y serialización JSON.
 - **Arranque:** `validar_config()` se ejecuta al importar el módulo; si faltan credenciales, la app no arranca (error claro en logs, en lugar de fallar en la primera petición).
-- **Rate limiting:** Flask-Limiter limita `/api/chat` a 30 req/minuto y 500/día por IP (almacenamiento en memoria, por worker), protegiendo la cuota gratuita de Groq.
+- **Rate limiting:** Flask-Limiter limita `/api/chat` a 30 req/minuto y 500/día por IP, y `/api/logs` a 60 req/minuto (almacenamiento en memoria; con 1 worker los contadores y el buffer de logs son coherentes).
 - **Seguridad de sesión:** cookies `HttpOnly`, `SameSite=Lax` y `Secure` activado en Render (`RENDER` presente en el entorno).
+- **Observabilidad:** registra el inicio y fin de cada petición (`fase`, mensaje recortado, latencia total, respuesta recortada), los rechazos 400 y las excepciones con traceback.
 - **Rutas:**
 
 | Método y ruta | Descripción |
 |---------------|-------------|
 | `GET /` | Inicializa la sesión si está vacía y renderiza `templates/index.html`. |
 | `POST /api/chat` | Recibe `{"mensaje": "..."}`, despacha según `session['fase']`. Limitado a 30 req/min y 500/día por IP. |
+| `GET /api/logs` | Devuelve las últimas entradas del buffer (`?limit=1..500`). En local está abierto; con `LOGS_TOKEN` definido exige `?token=`; en Render sin `LOGS_TOKEN` responde 404. |
 | `POST /api/reset` | `session.clear()`; devuelve `{"status": "ok"}`. |
 
 - **Sesión:** `app.secret_key = config.SECRET_KEY` (única fuente). Al ser obligatoria, `validar_config()` garantiza que nunca se firme con un default público.
@@ -243,14 +258,15 @@ LIMIT 1
 
 ### [Frontend] `templates/index.html` + `static/`
 
-- **`index.html`:** layout de chat (header con marca SALUS, botón de reset, mensajes, formulario de entrada) y favicon inline (SVG ⚕️). Carga la fuente Outfit de Google Fonts.
+- **`index.html`:** layout de chat (header con marca SALUS, botones de logs y reset, mensajes, formulario de entrada), panel lateral de logs y favicon inline (SVG ⚕️). Carga la fuente Outfit de Google Fonts.
 - **`script.js`:**
   - Envía el mensaje con `fetch('/api/chat')` y renderiza la respuesta del bot.
   - Indicador de escritura animado (3 puntos) mientras espera.
   - Convierte cualquier URL de la respuesta en un enlace con texto `Ver Producto` (`target="_blank"`).
   - Botón de reset con `confirm()` → `POST /api/reset` y limpia el DOM.
   - Bloquea input y botón de envío durante la petición (evita dobles envíos).
-- **`style.css`:** tema verde (`--primary: #10b981`), variables CSS en `:root`, glassmorphism suave (`rgba` + blur), animaciones `fadeIn` / `pulse` / `typing`, burbujas diferenciadas para usuario/bot/sistema y scrollbar personalizada.
+  - **Panel de logs:** el botón de terminal abre un panel lateral oscuro que consulta `/api/logs?limit=200` cada 3 s; colorea por nivel (`INFO`/`WARNING`/`ERROR`), muestra hora/módulo/mensaje, auto-scroll configurable y botón de limpiar (solo visual). El token opcional se pasa en la URL (`?log_token=...`) y se guarda en `sessionStorage`; el texto se inserta con `textContent` (sin XSS).
+- **`style.css`:** tema verde (`--primary: #10b981`), variables CSS en `:root`, glassmorphism suave (`rgba` + blur), animaciones `fadeIn` / `pulse` / `typing`, burbujas diferenciadas para usuario/bot/sistema, estilos del panel de logs (tema consola oscura, responsive) y scrollbar personalizada.
 
 ### ~~[Legacy] `*/FASE1.py`, `asesoria/groq_cliente.py`, `producto/groq_cliente.py`~~ (eliminados)
 
@@ -333,8 +349,9 @@ Columnas consultadas por `producto/database.py` (el esquema completo de la tabla
 6. **Salida JSON estricta:** recepción, asesoría y extracción usan `response_format={"type": "json_object"}` y parsean con `json.loads`. El contrato de cada prompt es parte del código: cambiarlo exige actualizar el parseo en el mismo commit.
 7. **Errores siempre en JSON:** los handlers globales de `app.py` impiden que Flask devuelva HTML de error, lo que rompería el `response.json()` del frontend.
 8. **Protección de cuota:** el endpoint público `/api/chat` está limitado por IP (30 req/min, 500/día) y los errores internos nunca se muestran al usuario; ambos cambios protegen la cuota gratuita de Groq y evitan filtrar detalles internos.
-9. **Fase Producto terminal:** una vez en `producto`, cada mensaje se interpreta como una nueva búsqueda; la única forma de volver a recepción es `POST /api/reset` (botón ↺) o una sesión nueva.
-10. **Fase Historial pendiente:** responde con un mensaje informativo desde `app.py`. No existe carpeta `historial/` ni módulo `historial.py` todavía.
+9. **Logs efímeros y con datos recortados:** el buffer vive en memoria (no se escribe a disco), guarda las últimas `LOGS_BUFFER` entradas y recorta los textos. Como contienen mensajes de usuarios, en producción `/api/logs` exige `LOGS_TOKEN` y las API keys siempre van enmascaradas.
+10. **Fase Producto terminal:** una vez en `producto`, cada mensaje se interpreta como una nueva búsqueda; la única forma de volver a recepción es `POST /api/reset` (botón ↺) o una sesión nueva.
+11. **Fase Historial pendiente:** responde con un mensaje informativo desde `app.py`. No existe carpeta `historial/` ni módulo `historial.py` todavía.
 
 ---
 
@@ -358,7 +375,10 @@ pip install -r requirements.txt
 ### B. Variables de entorno
 
 1. Copiar `.env.example` a `.env`.
-2. Completar: `GROQ_API_KEYS` (una o más keys separadas por coma), `TURSO_URL`, `TURSO_TOKEN` y `SECRET_KEY` (obligatoria; genera una con `python -c "import secrets; print(secrets.token_hex(32))"`). Opcional: `GROQ_MODEL` para cambiar el modelo.
+2. Completar: `GROQ_API_KEYS` (una o más keys separadas por coma), `TURSO_URL`, `TURSO_TOKEN` y `SECRET_KEY` (obligatoria; genera una con `python -c "import secrets; print(secrets.token_hex(32))"`). Opcionales: `GROQ_MODEL`, `LOG_LEVEL`, `LOGS_BUFFER` y `LOGS_TOKEN`.
+
+> [!TIP]
+> **Cómo ver los logs:** local abre el botón de terminal (⎡>_⎦) del header → panel en vivo. En Render define `LOGS_TOKEN` y entra una vez con `https://salus-ctix.onrender.com/?log_token=TU_TOKEN` (el token queda guardado en la pestaña).
 
 > [!IMPORTANT]
 > `.env` está en `.gitignore`: nunca se sube al repositorio. En **Render**, definir las mismas variables en *Dashboard → Environment*.
@@ -370,6 +390,9 @@ pip install -r requirements.txt
 | `TURSO_URL` | Sí | `https://tu-db.turso.io` | URL de la base Turso. |
 | `TURSO_TOKEN` | Sí | `eyJhbGci…` | Token de Turso. |
 | `SECRET_KEY` | Sí | `token_hex(32)` | Firma de la cookie de sesión. Sin ella la app no arranca. |
+| `LOG_LEVEL` | No | `INFO` | Nivel mínimo de logging (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
+| `LOGS_BUFFER` | No | `500` | Entradas conservadas en memoria para el panel de logs. |
+| `LOGS_TOKEN` | No | `token-secreto` | Token para ver `/api/logs`. En Render es obligatorio para habilitar el panel. |
 
 ### C. Ejecución local
 
@@ -380,7 +403,7 @@ python app.py
 
 ### D. Ejecución en producción (Render)
 
-- El `Procfile` ya define el comando: `web: gunicorn app:app --workers 2 --threads 4 --timeout 120` (el timeout amplio evita cortes cuando el LLM tarda o la instancia despierta).
+- El `Procfile` ya define el comando: `web: gunicorn app:app --workers 1 --threads 8 --timeout 120` (el timeout amplio evita cortes cuando el LLM tarda o la instancia despierta; 1 worker mantiene coherentes el buffer de logs y los límites por IP).
 - Render inyecta las variables de entorno; `load_dotenv()` no encuentra `.env` y no hace nada.
 - El plan gratuito puede **dormir** la instancia: la primera petición tras inactividad tarda unos segundos.
 - **Despliegue automático:** el servicio de Render está conectado al repositorio GitHub (`Leecsito/Salus`). Con *Auto-Deploy* en **On Commit** (Dashboard → servicio → Settings → Build & Deploy), cada `git push` a la rama `main` dispara un redespliegue: **no hace falta ningún archivo adicional ni desplegar a mano**.

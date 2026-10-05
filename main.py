@@ -1,8 +1,12 @@
 import json
+import logging
 import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from groq_cliente import llamar_groq
+from logs import recortar
+
+logger = logging.getLogger("salus.recepcion")
 
 PROMPT_SISTEMA_RECEPCION = """Eres el recepcionista virtual de Nature's Green. Hablas con calidez, empatía genuina y cercanía, como alguien que realmente se preocupa por la persona. Nunca suenas frío, robótico ni insistente. Tu objetivo es acompañar al cliente en la conversación hasta descubrir exactamente qué necesita, sin apresurarlo. Tus respuestas son siempre cortas: máximo 1-2 frases, sin rodeos ni texto de relleno.
 
@@ -43,7 +47,8 @@ def responder_recepcion(mensaje_usuario: str, historial: list):
         historial = [{"role": "system", "content": PROMPT_SISTEMA_RECEPCION}]
         
     historial.append({"role": "user", "content": mensaje_usuario})
-    
+
+    logger.info("Recepción | prompt=PROMPT_SISTEMA_RECEPCION | user=%r", recortar(mensaje_usuario))
     try:
         respuesta_api = llamar_groq(
             messages=historial,
@@ -57,8 +62,9 @@ def responder_recepcion(mensaje_usuario: str, historial: list):
 
         historial.append({"role": "assistant", "content": json.dumps(datos)})
 
+        logger.info("Recepción resuelta | intencion=%s | respuesta=%r", intencion, recortar(respuesta_ia, 200))
         return respuesta_ia, intencion, historial
 
     except Exception as e:
-        print(f"[main.py] Error al consultar Groq: {e}")
+        logger.error("Recepción falló: %s", e, exc_info=True)
         return "Lo siento, tuve un problema para responder. Intenta de nuevo en unos segundos.", "error", historial

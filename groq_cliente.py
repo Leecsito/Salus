@@ -6,6 +6,7 @@ groq_cliente.py — Cliente compartido de Groq para todo el proyecto SALUS.
 - HTTP 429 (rate limit)               → salta a la siguiente key
 Si todas las keys fallan, relanza la excepción.
 """
+import logging
 import os
 import sys
 import time
@@ -13,6 +14,9 @@ from groq import Groq, APIError
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import API_KEYS, MODELO
+from logs import mascara_key
+
+logger = logging.getLogger("salus.groq")
 
 def obtener_cliente(indice_key: int) -> Groq:
     return Groq(api_key=API_KEYS[indice_key])
@@ -32,9 +36,22 @@ def llamar_groq(messages, model=MODELO, temperature=0.3, response_format=None):
             }
             if response_format:
                 kwargs["response_format"] = response_format
-            return cliente.chat.completions.create(**kwargs)
+
+            logger.info(
+                "Groq → key#%d %s | modelo=%s | temp=%s | json=%s",
+                key_index + 1, mascara_key(API_KEYS[key_index]),
+                model, temperature, bool(response_format)
+            )
+            inicio = time.perf_counter()
+            respuesta = cliente.chat.completions.create(**kwargs)
+            logger.info("Groq ← OK en %.0f ms", (time.perf_counter() - inicio) * 1000)
+            return respuesta
+
         except APIError as e:
-            if getattr(e, 'status_code', None) in (401, 429) and intento < len(API_KEYS) - 1:
+            status = getattr(e, 'status_code', None)
+            if status in (401, 429) and intento < len(API_KEYS) - 1:
+                logger.warning("Groq key#%d falló (%s) → rotando a la siguiente key", key_index + 1, status)
                 time.sleep(2)
                 continue
+            logger.error("Groq key#%d falló (%s): %s", key_index + 1, status, e)
             raise e

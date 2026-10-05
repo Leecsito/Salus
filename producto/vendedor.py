@@ -4,7 +4,11 @@ Responsabilidad: tomar los resultados de la BD y generar una respuesta
 natural, directa y orientada a la venta usando el modelo de Groq.
 """
 import json
+import logging
 from groq_cliente import llamar_groq
+from logs import recortar
+
+logger = logging.getLogger("salus.vendedor")
 
 PROMPT_VENDEDOR = """Eres el vendedor de Nature's Green.
 El cliente busca: "{termino}".
@@ -27,9 +31,12 @@ def generar_respuesta_vendedor(termino: str, resultados_db: list) -> str:
         termino=termino,
         resultados=json.dumps(resultados_db, ensure_ascii=False)
     )
+    logger.info("Vendedor | prompt=PROMPT_VENDEDOR | resultados=%d | termino=%r",
+                len(resultados_db), recortar(termino, 80))
     respuesta = llamar_groq(
-        model="openai/gpt-oss-20b",
         messages=[{"role": "system", "content": prompt}],
         temperature=0.3
     )
-    return respuesta.choices[0].message.content
+    respuesta_texto = respuesta.choices[0].message.content
+    logger.info("Vendedor | respuesta=%r", recortar(respuesta_texto, 200))
+    return respuesta_texto

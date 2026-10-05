@@ -4,7 +4,11 @@ Responsabilidad: mantener la conversación con el cliente para diagnosticar
 su necesidad y recomendar un tipo de producto específico.
 """
 import json
+import logging
 from groq_cliente import llamar_groq
+from logs import recortar
+
+logger = logging.getLogger("salus.asesoria")
 
 PROMPT_SISTEMA = """Eres el asesor de salud naturista de Nature's Green.
 Tu objetivo es diagnosticar el problema del cliente haciendo preguntas breves y precisas sobre sus síntomas.
@@ -32,6 +36,7 @@ def responder_asesoria(mensaje_usuario: str, historial: list):
 
     historial.append({"role": "user", "content": mensaje_usuario})
 
+    logger.info("Asesoría | prompt=PROMPT_SISTEMA | user=%r", recortar(mensaje_usuario))
     try:
         respuesta_api = llamar_groq(
             messages=historial,
@@ -46,8 +51,12 @@ def responder_asesoria(mensaje_usuario: str, historial: list):
 
         historial.append({"role": "assistant", "content": json.dumps(datos)})
 
+        logger.info(
+            "Asesoría resuelta | estado=%s | producto_sugerido=%r | respuesta=%r",
+            estado, producto_sugerido, recortar(respuesta_ia, 200)
+        )
         return respuesta_ia, estado, producto_sugerido, historial
 
     except Exception as e:
-        print(f"[asesoria/asesoria.py] Error: {e}")
+        logger.error("Asesoría falló: %s", e, exc_info=True)
         return "Lo siento, tuve un problema para responder. Intenta de nuevo en unos segundos.", "error", "", historial

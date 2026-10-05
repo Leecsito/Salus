@@ -4,7 +4,11 @@ Responsabilidad: usar IA para extraer el sustantivo principal (singular) del
 mensaje del usuario, descartando frases de síntomas o verbos de acción.
 """
 import json
+import logging
 from groq_cliente import llamar_groq
+from logs import recortar
+
+logger = logging.getLogger("salus.extractor")
 
 PROMPT_EXTRACCION = """Analiza el mensaje del usuario y extrae ÚNICAMENTE el sustantivo principal del producto que está buscando, en SINGULAR y sin frases adicionales.
 IGNORA descripciones de síntomas o frases como 'para aliviar el dolor', 'que tengan', 'busco'.
@@ -18,8 +22,8 @@ def extraer_termino(mensaje: str) -> str:
     Devuelve el término de búsqueda extraído del mensaje.
     Retorna string vacío si no se pudo identificar ningún producto.
     """
+    logger.info("Extractor | prompt=PROMPT_EXTRACCION | mensaje=%r", recortar(mensaje))
     respuesta = llamar_groq(
-        model="openai/gpt-oss-20b",
         messages=[
             {"role": "system", "content": PROMPT_EXTRACCION},
             {"role": "user",   "content": mensaje}
@@ -27,4 +31,6 @@ def extraer_termino(mensaje: str) -> str:
         temperature=0,
         response_format={"type": "json_object"}
     )
-    return json.loads(respuesta.choices[0].message.content).get("termino", "")
+    termino = json.loads(respuesta.choices[0].message.content).get("termino", "")
+    logger.info("Extractor | término=%r", termino)
+    return termino

@@ -2,21 +2,30 @@ from flask import Flask, render_template, request, jsonify, session
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.exceptions import HTTPException
-import os
 import asyncio
+import logging
+import os
 import sys
-import traceback
+import time
 
 # Agregar la ruta actual para las importaciones
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from config import SECRET_KEY, validar_config
+from logs import buffer_logs, configurar_logging, recortar
 from main import responder_recepcion
 from asesoria.asesoria import responder_asesoria
 from producto.producto import ejecutar_busqueda_producto as ejecutar_producto
 
+configurar_logging()
+logger = logging.getLogger("salus.app")
+
 # Falla al arrancar si faltan variables críticas (mejor que fallar en la primera petición)
-validar_config()
+try:
+    validar_config()
+except EnvironmentError as e:
+    logger.error("Configuración incompleta:\n%s", e)
+    raise
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -53,7 +62,7 @@ def server_error(e):
 def unhandled_exception(e):
     if isinstance(e, HTTPException):
         return jsonify({"respuesta": f"Error {e.code}: {e.name}"}), e.code
-    print(f"[EXCEPCIÓN NO MANEJADA]:\n{traceback.format_exc()}")
+    logger.error("Excepción no manejada: %s", e, exc_info=True)
     return jsonify({"respuesta": "Error inesperado. Intenta de nuevo."}), 500
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -73,10 +82,12 @@ def chat():
     """
     data = request.get_json(force=True, silent=True)
     if not data:
+        logger.warning("Solicitud rechazada: sin JSON válido")
         return jsonify({"respuesta": "Solicitud inválida. Envía un JSON con el campo 'mensaje'."}), 400
 
     mensaje_usuario = data.get("mensaje", "").strip()
     if not mensaje_usuario:
+        logger.warning("Solicitud rechazada: mensaje vacío")
         return jsonify({"respuesta": "El mensaje no puede estar vacío."}), 400
 
     # Inicializar sesión si está vacía (ej. primera visita o sesión expirada)
@@ -87,7 +98,12 @@ def chat():
     fase_actual = session.get('fase', 'recepcion')
     historial = session.get('historial', [])
 
+    inicio = time.perf_counter()
+    logger.info("→ POST /api/chat | fase=%s | mensaje=%r", fase_actual, recortar(mensaje_usuario))
+
     def ok(respuesta, fase):
+        logger.info("← POST /api/chat | fase=%s | %.0f ms | respuesta=%r",
+                    fase, (time.perf_counter() - inicio) * 1000, recortar(respuesta, 200))
         return jsonify({"respuesta": respuesta, "fase": fase})
 
     try:
@@ -137,13 +153,34 @@ def chat():
             session.clear()
             return jsonify({"respuesta": "Sesión reiniciada. ¿En qué te puedo ayudar?", "fase": "recepcion"})
 
-    except Exception:
-        print(f"[ERROR en /api/chat]:\n{traceback.format_exc()}")
+    except Exception as e:
+        logger.error("Error procesando mensaje: %s", e, exc_info=True)
         return jsonify({"respuesta": "Lo siento, ocurrió un error al procesar tu mensaje. Intenta de nuevo."}), 500
+
+
+@app.route("/api/logs")
+@limiter.limit("60 per minute")
+def ver_logs():
+    """
+    Expone las últimas entradas del buffer de logs para el panel de depuración.
+    En local está abierto; en Render exige la variable LOGS_TOKEN.
+    """
+    token = os.environ.get("LOGS_TOKEN", "")
+    if token:
+        if request.args.get("token", "") != token:
+            return jsonify({"respuesta": "Token de logs inválido."}), 403
+    elif os.environ.get("RENDER"):
+        return jsonify({"respuesta": "Logs deshabilitados en producción: define LOGS_TOKEN en Render."}), 404
+
+    limite_arg = request.args.get("limit", "100")
+    limite = int(limite_arg) if limite_arg.isdigit() else 100
+    limite = max(1, min(limite, 500))
+    return jsonify({"logs": buffer_logs.ultimas(limite)})
 
 
 @app.route("/api/reset", methods=["POST"])
 def reset():
+    logger.info("↺ Sesión reiniciada por el usuario")
     session.clear()
     return jsonify({"status": "ok"})
 

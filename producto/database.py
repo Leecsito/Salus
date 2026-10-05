@@ -3,6 +3,7 @@ database.py — Consulta a la base de datos Turso.
 Responsabilidad: conectarse a Turso (SQLite serverless) y buscar productos
 por nombre o descripción. Devuelve una lista de diccionarios con los datos.
 """
+import logging
 import os
 import sys
 import libsql_client
@@ -10,6 +11,9 @@ import libsql_client
 # Importa las credenciales desde el módulo central de configuración
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from config import TURSO_URL, TURSO_TOKEN
+from logs import recortar
+
+logger = logging.getLogger("salus.turso")
 
 CONSULTA_SQL = """
 SELECT nombre_producto, marca, descripcion, precio1, slug,
@@ -27,6 +31,7 @@ async def buscar_producto(termino: str) -> list:
     Devuelve lista de dicts con los campos del producto, o lista vacía si no hay resultados.
     """
     termino_sql = f"%{termino}%"
+    logger.info("Turso → consulta productos LIKE %r", recortar(termino, 80))
     async with libsql_client.create_client(url=TURSO_URL, auth_token=TURSO_TOKEN) as db:
         resultado = await db.execute(CONSULTA_SQL, [termino_sql, termino_sql])
 
@@ -49,4 +54,5 @@ async def buscar_producto(termino: str) -> list:
                 "recomendaciones":   fila[12],
                 "disponible":        bool(fila[13]),
             })
+        logger.info("Turso ← %d fila(s)", len(productos))
         return productos

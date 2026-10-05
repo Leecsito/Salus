@@ -112,4 +112,105 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     });
+
+    // ── Panel de logs del servidor ──────────────────────────────
+    const logBtn     = document.getElementById('log-btn');
+    const logPanel   = document.getElementById('log-panel');
+    const logEntries = document.getElementById('log-entries');
+    const logClose   = document.getElementById('log-close');
+    const logClear   = document.getElementById('log-clear');
+    const logAuto    = document.getElementById('log-autoscroll');
+    const logStatus  = document.getElementById('log-status');
+
+    let logTimer = null;
+
+    // Token opcional: viaja en la URL (?log_token=...) y se guarda en la pestaña
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('log_token')) {
+        sessionStorage.setItem('salus_log_token', params.get('log_token'));
+        params.delete('log_token');
+        const resto = params.toString();
+        history.replaceState(null, '', window.location.pathname + (resto ? '?' + resto : ''));
+    }
+
+    function crearCelda(clase, texto) {
+        const celda = document.createElement('span');
+        celda.className = clase;
+        celda.textContent = texto;
+        return celda;
+    }
+
+    function renderLogs(entradas) {
+        logEntries.textContent = '';
+        if (!entradas.length) {
+            const vacio = document.createElement('div');
+            vacio.className = 'log-empty';
+            vacio.textContent = 'Sin actividad todavía.';
+            logEntries.appendChild(vacio);
+            return;
+        }
+        for (const entrada of entradas) {
+            const fila = document.createElement('div');
+            fila.className = 'log-row log-' + (entrada.nivel || 'info').toLowerCase();
+            fila.append(
+                crearCelda('log-time', entrada.ts || ''),
+                crearCelda('log-level', entrada.nivel || ''),
+                crearCelda('log-module', entrada.modulo || ''),
+                crearCelda('log-msg', entrada.mensaje || '')
+            );
+            logEntries.appendChild(fila);
+        }
+        if (logAuto.checked) {
+            logEntries.scrollTop = logEntries.scrollHeight;
+        }
+    }
+
+    async function cargarLogs() {
+        const token = sessionStorage.getItem('salus_log_token') || '';
+        try {
+            const url = '/api/logs?limit=200' + (token ? '&token=' + encodeURIComponent(token) : '');
+            const respuesta = await fetch(url);
+            const datos = await respuesta.json();
+            if (respuesta.ok) {
+                logStatus.textContent = 'en vivo';
+                logStatus.className = 'log-status ok';
+                renderLogs(datos.logs || []);
+            } else {
+                logStatus.textContent = datos.respuesta || 'no disponible';
+                logStatus.className = 'log-status error';
+            }
+        } catch (error) {
+            logStatus.textContent = 'sin conexión';
+            logStatus.className = 'log-status error';
+        }
+    }
+
+    function detenerLogs() {
+        if (logTimer) {
+            clearInterval(logTimer);
+            logTimer = null;
+        }
+    }
+
+    logBtn.addEventListener('click', () => {
+        const estabaAbierto = !logPanel.hidden;
+        logPanel.hidden = estabaAbierto;
+        logBtn.classList.toggle('active', !estabaAbierto);
+        if (estabaAbierto) {
+            detenerLogs();
+        } else {
+            cargarLogs();
+            logTimer = setInterval(cargarLogs, 3000);
+        }
+    });
+
+    logClose.addEventListener('click', () => {
+        logPanel.hidden = true;
+        logBtn.classList.remove('active');
+        detenerLogs();
+    });
+
+    logClear.addEventListener('click', () => {
+        logEntries.textContent = '';
+    });
 });
