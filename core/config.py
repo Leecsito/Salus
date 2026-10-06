@@ -26,7 +26,7 @@ MODELO: str = os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b")
 # Turnos recientes que se pasan como contexto al extractor y al vendedor
 HISTORIAL_TURNOS: int = int(os.environ.get("HISTORIAL_TURNOS", "4"))
 # Máximo de productos que devuelve Turso y recibe el vendedor
-LIMITE_PRODUCTOS: int = int(os.environ.get("LIMITE_PRODUCTOS", "3"))
+LIMITE_PRODUCTOS: int = int(os.environ.get("LIMITE_PRODUCTOS", "5"))
 
 # ── Turso ─────────────────────────────────────────────────────────────────────
 TURSO_URL: str = os.environ.get("TURSO_URL", "")

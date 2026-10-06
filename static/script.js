@@ -20,10 +20,15 @@ document.addEventListener('DOMContentLoaded', () => {
         // En este caso, solo ponemos el texto con saltos de línea preservados
         let formattedContent = content.replace(/\n/g, '<br>');
         
-        // Detectar URLs simples y hacerlas clickeables si es bot (muy básico)
+        // Detectar URLs y hacerlas clickeables si es bot. Se limpia la puntuación
+        // pegada (paréntesis, punto, coma...) para que el enlace no salga roto.
         if (type === 'bot') {
-            const urlRegex = /(https?:\/\/[^\s]+)/g;
-            formattedContent = formattedContent.replace(urlRegex, '<a href="$1" target="_blank" rel="noopener noreferrer">Ver Producto</a>');
+            const urlRegex = /(https?:\/\/[^\s<>()]+)/g;
+            formattedContent = formattedContent.replace(urlRegex, (url) => {
+                const limpia = url.replace(/[.,;:!?]+$/, '');
+                const cola = url.slice(limpia.length);
+                return `<a href="${limpia}" target="_blank" rel="noopener noreferrer">Ver Producto</a>${cola}`;
+            });
         }
 
         msgDiv.innerHTML = `<p>${formattedContent}</p>`;

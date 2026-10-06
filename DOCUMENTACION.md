@@ -272,7 +272,7 @@ El estado de la conversación vive en la **sesión de Flask**, lo que permite qu
 ### [Helper] `producto/database.py` — Consulta a Turso
 
 - **Función:** `async buscar_producto(termino) → list[dict]`.
-- **Consulta SQL** (`CONSULTA_SQL`), con parámetros `%termino%` duplicados y `LIMITE_PRODUCTOS` (default 3, configurable en `core/config.py`):
+- **Consulta SQL** (`CONSULTA_SQL`), con parámetros `%termino%` triplicados (nombre, descripción y marca) y `LIMITE_PRODUCTOS` (default 5, configurable en `core/config.py`):
 
 ```sql
 SELECT nombre_producto, marca, descripcion, precio1, slug,
@@ -280,7 +280,7 @@ SELECT nombre_producto, marca, descripcion, precio1, slug,
        edad_recomendada, contraindicaciones, advertencias, recomendaciones,
        (stock > 0) AS disponible
 FROM productos
-WHERE (nombre_producto LIKE ? OR descripcion LIKE ?) AND oculto = 0
+WHERE (nombre_producto LIKE ? OR descripcion LIKE ? OR marca LIKE ?) AND oculto = 0
 LIMIT ?
 ```
 
@@ -288,7 +288,7 @@ LIMIT ?
 - **Normalización:** cada fila se convierte en dict con claves `nombre`, `marca`, `descripcion`, `precio`, `enlace`, `para_que_sirve`, `como_tomar`, `dosis`, `via_administracion`, `edad_recomendada`, `contraindicaciones`, `advertencias`, `recomendaciones`, `disponible`.
 - **Enlace:** se construye como `https://www.naturesgreenec.com/producto/{slug}` (o `None` si no hay slug).
 - **Ranking:** los resultados se ordenan por prioridad = número de campos clave presentes (`foto_url`, `video_url`, `info_completada`, `categoria_id`, `star`/`superstar`). El stock **no** influye en el orden (solo informa `disponible`). Así el vendedor recibe los productos más completos, no los primeros que aparezcan.
-- **Límites:** `oculto = 0` excluye productos ocultos; `LIMIT ?` devuelve hasta `LIMITE_PRODUCTOS` coincidencias (default 3), ya ordenadas por prioridad.
+- **Límites:** `oculto = 0` excluye productos ocultos; `LIMIT ?` devuelve hasta `LIMITE_PRODUCTOS` coincidencias (default 5), ya ordenadas por prioridad.
 
 ### [Helper] `producto/vendedor.py` — Respuesta de ventas conversacional
 
@@ -344,7 +344,7 @@ LIMIT ?
 - **`script.js`:**
   - Envía el mensaje con `fetch('/api/chat')` y renderiza la respuesta del bot.
   - Indicador de escritura animado (3 puntos) mientras espera.
-  - Convierte cualquier URL de la respuesta en un enlace con texto `Ver Producto` (`target="_blank"`).
+  - Convierte cualquier URL de la respuesta en un enlace con texto `Ver Producto` (`target="_blank"`), limpiando la puntuación pegada (paréntesis, punto, coma) para que el enlace no salga roto.
   - Botón de reset con `confirm()` → `POST /api/reset` y limpia el DOM.
   - Bloquea input y botón de envío durante la petición (evita dobles envíos).
   - **Panel de logs:** el botón de terminal abre un panel lateral oscuro que consulta `/api/logs?limit=200` cada 3 s; colorea por nivel (`INFO`/`WARNING`/`ERROR`), muestra hora/módulo/mensaje, auto-scroll configurable y botones **Copiar** (portapapeles con formato `[hora] NIVEL módulo: mensaje`) y **Limpiar** (vacía el buffer del servidor vía `POST /api/logs/clear`). El texto se inserta con `textContent` (sin XSS).
@@ -387,7 +387,7 @@ Columnas consultadas por `producto/database.py` (el esquema completo de la tabla
 | `star` / `superstar` | INTEGER | Ranking: +1 si es destacado (`star` o `superstar` > 0). |
 
 > [!NOTE]
-> La consulta devuelve hasta `LIMITE_PRODUCTOS` coincidencias (default 3, configurable) **ordenadas por prioridad** (campos clave completos). El vendedor las recibe todas y compara/recomienda; con lista vacía responde que no lo encontró y pregunta qué busca.
+> La consulta devuelve hasta `LIMITE_PRODUCTOS` coincidencias (default 5, configurable) **ordenadas por prioridad** (campos clave completos). El vendedor las recibe todas y compara/recomienda; con lista vacía responde que no lo encontró y pregunta qué busca.
 
 ### B. Contrato del dict `producto` (salida de `buscar_producto`)
 
@@ -442,7 +442,7 @@ Columnas consultadas por `producto/database.py` (el esquema completo de la tabla
 11. **Historial, tratamiento y venta pendientes:** existen como esqueletos en sus carpetas (`historial/`, `tratamiento/`, `venta/`) con `responder` placeholder y TODO; aún no tienen lógica de negocio.
 12. **Saludo inicial:** la conversación arranca en `saludo`; el LLM genera una bienvenida variada (enfoques aleatorios) sin asumir productos, y el primer mensaje del cliente solo se usa como contexto (no se clasifica). A partir del siguiente turno, todo pasa por `atencion`.
 13. **Contexto en producto:** extractor y vendedor reciben los últimos `HISTORIAL_TURNOS` turnos (default 4) mediante `producto/contexto.py`; por eso las referencias ("y bueno?", "y solo tienen ese?", "ese") se resuelven sin repetir el producto. Si el extractor no logra un término, la repregunta también la genera el LLM con ese contexto (nada de texto fijo).
-14. **Ranking de productos:** la búsqueda prioriza productos con `foto_url`, `video_url`, `info_completada`, `categoria_id` y `star`/`superstar` (más campos completos = mejor posición); el stock no influye en el orden y los ocultos nunca se muestran. Los enlaces de producto se construyen siempre con `www`: `https://www.naturesgreenec.com/producto/{slug}`.
+14. **Ranking de productos:** la búsqueda cubre nombre, descripción y marca, y prioriza productos con `foto_url`, `video_url`, `info_completada`, `categoria_id` y `star`/`superstar` (más campos completos = mejor posición); el stock no influye en el orden y los ocultos nunca se muestran. Los enlaces de producto se construyen siempre con `www`: `https://www.naturesgreenec.com/producto/{slug}`.
 
 ---
 
@@ -479,7 +479,7 @@ pip install -r requirements.txt
 | `GROQ_API_KEYS` | Sí | `gsk_abc,gsk_def` | Keys separadas por coma; se rotan ante 401/429. |
 | `GROQ_MODEL` | No | `openai/gpt-oss-20b` | Modelo Groq a usar. Si se omite, usa el default. |
 | `HISTORIAL_TURNOS` | No | `4` | Turnos recientes que extractor y vendedor usan como contexto. |
-| `LIMITE_PRODUCTOS` | No | `3` | Máximo de productos que devuelve Turso y recibe el vendedor. |
+| `LIMITE_PRODUCTOS` | No | `5` | Máximo de productos que devuelve Turso y recibe el vendedor. |
 | `TURSO_URL` | Sí | `https://tu-db.turso.io` | URL de la base Turso. |
 | `TURSO_TOKEN` | Sí | `eyJhbGci…` | Token de Turso. |
 | `SECRET_KEY` | Sí | `token_hex(32)` | Firma de la cookie de sesión. Sin ella la app no arranca. |
@@ -534,7 +534,7 @@ curl -b cookies.txt -X POST http://127.0.0.1:5000/api/reset
 - Errores internos: ya no se exponen al usuario (solo mensajes genéricos; detalle en logs).
 - Rate limiting por IP en `/api/chat` y timeout/workers de Gunicorn configurados.
 - `requirements.txt` con versiones fijadas.
-- Producto conversacional con contexto (sesión actual): historial reciente en extractor y vendedor, repregunta natural por LLM, handoff atención→producto en el mismo turno, `LIMITE_PRODUCTOS` configurable (default 3), vendedor que compara/recomienda sin ficha y deriva a `tratamiento`/`venta`.
+- Producto conversacional con contexto (sesión actual): historial reciente en extractor y vendedor, repregunta natural por LLM, handoff atención→producto en el mismo turno, `LIMITE_PRODUCTOS` configurable (default 5), ranking por prioridad de campos, búsqueda por nombre/descripción/marca, enlaces con `www` y limpieza de puntuación, vendedor que compara/recomienda sin ficha y deriva a `tratamiento`/`venta`.
 
 **Pendientes:**
 

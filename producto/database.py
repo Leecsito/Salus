@@ -24,7 +24,7 @@ SELECT nombre_producto, marca, descripcion, precio1, slug,
        edad_recomendada, contraindicaciones, advertencias, recomendaciones,
        (stock > 0) AS disponible
 FROM productos
-WHERE (nombre_producto LIKE ? OR descripcion LIKE ?) AND oculto = 0
+WHERE (nombre_producto LIKE ? OR descripcion LIKE ? OR marca LIKE ?) AND oculto = 0
 ORDER BY
     ((foto_url IS NOT NULL AND foto_url <> '')
    + (video_url IS NOT NULL AND video_url <> '')
@@ -40,10 +40,10 @@ async def buscar_producto(termino: str) -> list:
     mejor prioridad). Devuelve lista de dicts o lista vacía si no hay resultados.
     """
     termino_sql = f"%{termino}%"
-    logger.info("Turso → consulta productos LIKE %r | limite=%d | ranking=prioridad",
+    logger.info("Turso → consulta productos LIKE %r (nombre/descripción/marca) | limite=%d | ranking=prioridad",
                 recortar(termino, 80), LIMITE_PRODUCTOS)
     async with libsql_client.create_client(url=TURSO_URL, auth_token=TURSO_TOKEN) as db:
-        resultado = await db.execute(CONSULTA_SQL, [termino_sql, termino_sql, LIMITE_PRODUCTOS])
+        resultado = await db.execute(CONSULTA_SQL, [termino_sql, termino_sql, termino_sql, LIMITE_PRODUCTOS])
 
         productos = []
         for fila in resultado.rows:
