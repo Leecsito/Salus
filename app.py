@@ -38,6 +38,20 @@ limiter = Limiter(
     storage_uri="memory://",
 )
 
+# ── Sesión: versión del esquema ──────────────────────────────────────────────
+# Al cambiar VERSION_SESION, las cookies de sesión antiguas se reinician solas
+# (evita que una fase vieja, p. ej. "producto", siga activa tras un despliegue).
+VERSION_SESION = 2
+
+def _sesion_valida() -> bool:
+    return session.get('_v') == VERSION_SESION
+
+def _iniciar_sesion():
+    session.clear()
+    session['fase'] = flujo.FASE_INICIAL
+    session['historial'] = []
+    session['_v'] = VERSION_SESION
+
 # ── Handlers globales de error: SIEMPRE devuelven JSON, nunca HTML ──────────
 @app.errorhandler(404)
 def not_found(e):
@@ -61,9 +75,8 @@ def unhandled_exception(e):
 
 @app.route("/")
 def index():
-    if 'fase' not in session:
-        session['fase'] = flujo.FASE_INICIAL
-        session['historial'] = []
+    if not _sesion_valida():
+        _iniciar_sesion()
     return render_template("index.html")
 
 @app.route("/api/chat", methods=["POST"])
@@ -83,10 +96,9 @@ def chat():
         logger.warning("Solicitud rechazada: mensaje vacío")
         return jsonify({"respuesta": "El mensaje no puede estar vacío."}), 400
 
-    # Inicializar sesión si está vacía (ej. primera visita o sesión expirada)
-    if 'fase' not in session:
-        session['fase'] = flujo.FASE_INICIAL
-        session['historial'] = []
+    # Sesión nueva o de una versión anterior: se reinicia a la fase inicial
+    if not _sesion_valida():
+        _iniciar_sesion()
 
     fase_actual = session.get('fase', flujo.FASE_INICIAL)
     historial = session.get('historial', [])
@@ -114,14 +126,7 @@ def chat():
 @app.route("/api/logs")
 @limiter.limit("60 per minute")
 def ver_logs():
-    """
-    Expone las últimas entradas del buffer de logs para el panel de depuración.
-    Abierto por defecto; si se define LOGS_TOKEN, exige ?token=... para verlo.
-    """
-    token = os.environ.get("LOGS_TOKEN", "")
-    if token and request.args.get("token", "") != token:
-        return jsonify({"respuesta": "Token de logs inválido."}), 403
-
+    """Expone las últimas entradas del buffer de logs para el panel de depuración (sin token)."""
     limite_arg = request.args.get("limit", "100")
     limite = int(limite_arg) if limite_arg.isdigit() else 100
     limite = max(1, min(limite, 500))

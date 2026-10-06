@@ -218,9 +218,9 @@ El estado de la conversación vive en la **sesión de Flask**, lo que permite qu
 - **Propósito:** trazar el recorrido de cada mensaje para pulir el chat: qué módulo entra, qué prompt y modelo actúan, qué decide la IA, cuánto tarda y dónde falla.
 - **Destinos:** consola (Render) con formato `[hora] NIVEL módulo mensaje`, y un buffer circular en memoria (`deque`, últimas `LOGS_BUFFER` entradas, default 500) expuesto por `GET /api/logs`.
 - **Módulos registrados:** `salus.app`, `salus.flujo`, `salus.saludo`, `salus.atencion`, `salus.asesoria`, `salus.producto`, `salus.extractor`, `salus.vendedor`, `salus.turso`, `salus.tratamiento`, `salus.venta`, `salus.historial`, `salus.groq`.
-- **Seguridad:** las API keys se enmascaran (`gsk_XXXXX…XXXX`); los textos se recortan a 160–200 caracteres; el buffer nunca se escribe a disco. El acceso a `/api/logs` es abierto por defecto; definir `LOGS_TOKEN` lo restringe con `?token=...` (recomendado cuando haya usuarios reales).
+- **Seguridad:** las API keys se enmascaran (`gsk_XXXXX…XXXX`); los textos se recortan a 160–200 caracteres; el buffer nunca se escribe a disco. `/api/logs` está **abierto sin token** (pensado para pruebas; ver pendiente en §8).
 - **Niveles:** `INFO` para el flujo normal (prompt, key, decisión, tiempos), `WARNING` para rotaciones de key o búsquedas sin resultados, `ERROR` para excepciones con traceback en consola.
-- **Variables:** `LOG_LEVEL` (default `INFO`), `LOGS_BUFFER` (default `500`), `LOGS_TOKEN` (opcional, ver §7).
+- **Variables:** `LOG_LEVEL` (default `INFO`), `LOGS_BUFFER` (default `500`).
 
 ### [Orquestador] `flujo.py` — Registro de fases y transiciones
 
@@ -312,10 +312,11 @@ LIMIT 1
 |---------------|-------------|
 | `GET /` | Inicializa la sesión si está vacía y renderiza `templates/index.html`. |
 | `POST /api/chat` | Recibe `{"mensaje": "..."}`, despacha según `session['fase']`. Limitado a 30 req/min y 500/día por IP. |
-| `GET /api/logs` | Devuelve las últimas entradas del buffer (`?limit=1..500`). Abierto por defecto; si `LOGS_TOKEN` está definido, exige `?token=`. |
+| `GET /api/logs` | Devuelve las últimas entradas del buffer (`?limit=1..500`). **Abierto, sin token.** |
 | `POST /api/reset` | `session.clear()`; devuelve `{"status": "ok"}`. |
 
 - **Sesión:** `app.secret_key = core.config.SECRET_KEY` (única fuente). Al ser obligatoria, `validar_config()` garantiza que nunca se firme con un default público.
+- **Versión de sesión (`VERSION_SESION = 2`):** si la cookie no trae la versión actual (`_v`), la sesión se reinicia a `saludo`. Evita que una fase antigua (p. ej. `producto`) siga activa tras un despliegue.
 - **Handlers globales (`@app.errorhandler`):** `404`, `429`, `500` y `Exception` genérico devuelven siempre JSON con clave `respuesta`. Al usuario se le muestra un mensaje genérico; el traceback se imprime en logs con el prefijo `[EXCEPCIÓN NO MANEJADA]` o `[ERROR en /api/chat]`.
 - **Delegación:** entrega `(fase, mensaje, historial)` a `flujo.despachar` y guarda `(respuesta, siguiente_fase, historial)` en la sesión. Las reglas de transición viven en los componentes y en `flujo.py`, no aquí.
 
@@ -328,7 +329,7 @@ LIMIT 1
   - Convierte cualquier URL de la respuesta en un enlace con texto `Ver Producto` (`target="_blank"`).
   - Botón de reset con `confirm()` → `POST /api/reset` y limpia el DOM.
   - Bloquea input y botón de envío durante la petición (evita dobles envíos).
-  - **Panel de logs:** el botón de terminal abre un panel lateral oscuro que consulta `/api/logs?limit=200` cada 3 s; colorea por nivel (`INFO`/`WARNING`/`ERROR`), muestra hora/módulo/mensaje, auto-scroll configurable y botones **Copiar** (portapapeles con formato `[hora] NIVEL módulo: mensaje`) y **Limpiar** (solo visual). El token opcional se pasa en la URL (`?log_token=...`) y se guarda en `sessionStorage`; el texto se inserta con `textContent` (sin XSS).
+  - **Panel de logs:** el botón de terminal abre un panel lateral oscuro que consulta `/api/logs?limit=200` cada 3 s; colorea por nivel (`INFO`/`WARNING`/`ERROR`), muestra hora/módulo/mensaje, auto-scroll configurable y botones **Copiar** (portapapeles con formato `[hora] NIVEL módulo: mensaje`) y **Limpiar** (solo visual). El texto se inserta con `textContent` (sin XSS).
 - **`style.css`:** tema verde (`--primary: #10b981`), variables CSS en `:root`, glassmorphism suave (`rgba` + blur), animaciones `fadeIn` / `pulse` / `typing`, burbujas diferenciadas para usuario/bot/sistema, estilos del panel de logs (tema consola oscura, responsive) y scrollbar personalizada.
 
 ### ~~[Legacy] `*/FASE1.py`, `asesoria/groq_cliente.py`, `producto/groq_cliente.py`~~ (eliminados)
@@ -396,6 +397,7 @@ Columnas consultadas por `producto/database.py` (el esquema completo de la tabla
 |-------|------|-------------|
 | `fase` | str | Fase activa: `saludo` (default), `atencion`, `asesoria`, `producto`, `tratamiento`, `venta` o `historial`. |
 | `historial` | list[dict] | Mensajes en formato OpenAI (`role`/`content`), incluyendo el prompt de sistema. Se **vacía** al cambiar de fase. |
+| `_v` | int | Versión del esquema de sesión (`VERSION_SESION`). Si no coincide, la sesión se reinicia a `saludo`. |
 
 > [!NOTE]
 > El historial crece dentro de una misma fase; no hay truncado por longitud. El prompt de sistema se reinyecta al reconstruirlo cuando la lista está vacía.
@@ -412,7 +414,7 @@ Columnas consultadas por `producto/database.py` (el esquema completo de la tabla
 6. **Salida JSON estricta:** recepción, asesoría y extracción usan `response_format={"type": "json_object"}` y parsean con `json.loads`. El contrato de cada prompt es parte del código: cambiarlo exige actualizar el parseo en el mismo commit.
 7. **Errores siempre en JSON:** los handlers globales de `app.py` impiden que Flask devuelva HTML de error, lo que rompería el `response.json()` del frontend.
 8. **Protección de cuota:** el endpoint público `/api/chat` está limitado por IP (30 req/min, 500/día) y los errores internos nunca se muestran al usuario; ambos cambios protegen la cuota gratuita de Groq y evitan filtrar detalles internos.
-9. **Logs efímeros y con datos recortados:** el buffer vive en memoria (no se escribe a disco), guarda las últimas `LOGS_BUFFER` entradas y recorta los textos. Las API keys siempre van enmascaradas. Durante pruebas `/api/logs` queda abierto; cuando haya usuarios reales, define `LOGS_TOKEN` para restringirlo.
+9. **Logs efímeros y con datos recortados:** el buffer vive en memoria (no se escribe a disco), guarda las últimas `LOGS_BUFFER` entradas y recorta los textos. Las API keys siempre van enmascaradas. El panel `/api/logs` queda abierto (sin token) para pruebas; si el chat se abre a usuarios reales, conviene restringirlo (ver §8).
 10. **Fase Producto terminal:** una vez en `producto`, cada mensaje se interpreta como una nueva búsqueda; la única forma de volver al saludo es `POST /api/reset` (botón ↺) o una sesión nueva.
 11. **Historial, tratamiento y venta pendientes:** existen como esqueletos en sus carpetas (`historial/`, `tratamiento/`, `venta/`) con `responder` placeholder y TODO; aún no tienen lógica de negocio.
 12. **Saludo inicial:** la conversación arranca en `saludo`; el LLM genera un saludo variado y el primer mensaje del cliente solo se usa como contexto (no se clasifica). A partir del siguiente turno, todo pasa por `atencion`.
@@ -439,10 +441,10 @@ pip install -r requirements.txt
 ### B. Variables de entorno
 
 1. Copiar `.env.example` a `.env`.
-2. Completar: `GROQ_API_KEYS` (una o más keys separadas por coma), `TURSO_URL`, `TURSO_TOKEN` y `SECRET_KEY` (obligatoria; genera una con `python -c "import secrets; print(secrets.token_hex(32))"`). Opcionales: `GROQ_MODEL`, `LOG_LEVEL`, `LOGS_BUFFER` y `LOGS_TOKEN`.
+2. Completar: `GROQ_API_KEYS` (una o más keys separadas por coma), `TURSO_URL`, `TURSO_TOKEN` y `SECRET_KEY` (obligatoria; genera una con `python -c "import secrets; print(secrets.token_hex(32))"`). Opcionales: `GROQ_MODEL`, `LOG_LEVEL` y `LOGS_BUFFER`.
 
 > [!TIP]
-> **Cómo ver los logs:** abre el botón de terminal (⎡>_⎦) del header → panel en vivo (con botones Copiar y Limpiar). Si defines `LOGS_TOKEN`, entra además con `https://tu-servicio.onrender.com/?log_token=TU_TOKEN` una vez por pestaña.
+> **Cómo ver los logs:** abre el botón de terminal (⎡>_⎦) del header → panel en vivo (con botones Copiar y Limpiar). No requiere token ni URL especial.
 
 > [!IMPORTANT]
 > `.env` está en `.gitignore`: nunca se sube al repositorio. En **Render**, definir las mismas variables en *Dashboard → Environment*.
@@ -456,7 +458,6 @@ pip install -r requirements.txt
 | `SECRET_KEY` | Sí | `token_hex(32)` | Firma de la cookie de sesión. Sin ella la app no arranca. |
 | `LOG_LEVEL` | No | `INFO` | Nivel mínimo de logging (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
 | `LOGS_BUFFER` | No | `500` | Entradas conservadas en memoria para el panel de logs. |
-| `LOGS_TOKEN` | No | `token-secreto` | Si se define, `/api/logs` exige `?token=` (recomendado con usuarios reales). |
 
 ### C. Ejecución local
 
@@ -514,6 +515,7 @@ curl -b cookies.txt -X POST http://127.0.0.1:5000/api/reset
 3. **Historial sin truncado:** en conversaciones largas, `session['historial']` crece sin límite (límite práctico: tamaño de la cookie de sesión, ~4 KB). Acción sugerida: recortar a los últimos N turnos.
 4. **Sin pruebas automatizadas ni CI:** no hay tests unitarios de los prompts/parseos ni pipeline de verificación. Acción sugerida: tests de contrato para `atencion.responder`, `asesoria.responder`, `flujo.despachar` y `buscar_producto` con mocks de Groq/Turso.
 5. **Fallback 429 sin backoff exponencial:** se espera un `time.sleep(2)` fijo por key. Es aceptable en la capa gratuita, pero un backoff creciente sería más robusto.
+6. **Panel de logs abierto:** `/api/logs` no pide credenciales y muestra (recortados) los mensajes de los usuarios. Acción sugerida: protegerlo antes de abrir el chat al público.
 
 ---
 

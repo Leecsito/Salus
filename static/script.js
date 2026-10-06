@@ -126,15 +126,6 @@ document.addEventListener('DOMContentLoaded', () => {
     let logTimer = null;
     let ultimasEntradas = [];
 
-    // Token opcional: viaja en la URL (?log_token=...) y se guarda en la pestaña
-    const params = new URLSearchParams(window.location.search);
-    if (params.has('log_token')) {
-        sessionStorage.setItem('salus_log_token', params.get('log_token'));
-        params.delete('log_token');
-        const resto = params.toString();
-        history.replaceState(null, '', window.location.pathname + (resto ? '?' + resto : ''));
-    }
-
     function crearCelda(clase, texto) {
         const celda = document.createElement('span');
         celda.className = clase;
@@ -175,17 +166,15 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function cargarLogs() {
-        const token = sessionStorage.getItem('salus_log_token') || '';
         try {
-            const url = '/api/logs?limit=200' + (token ? '&token=' + encodeURIComponent(token) : '');
-            const respuesta = await fetch(url);
+            const respuesta = await fetch('/api/logs?limit=200');
             const datos = await respuesta.json();
             if (respuesta.ok) {
                 logStatus.textContent = 'en vivo';
                 logStatus.className = 'log-status ok';
                 renderLogs(datos.logs || []);
             } else {
-                logStatus.textContent = respuesta.status === 403 ? 'falta token' : 'deshabilitado';
+                logStatus.textContent = 'error';
                 logStatus.className = 'log-status error';
                 renderAviso(datos.respuesta || 'Logs no disponibles.');
             }
