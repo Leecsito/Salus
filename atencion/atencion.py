@@ -8,6 +8,7 @@ import json
 import logging
 from core.groq_cliente import llamar_groq
 from core.logs import recortar
+from producto.producto import responder as responder_producto
 
 logger = logging.getLogger("salus.atencion")
 
@@ -47,8 +48,13 @@ def responder(mensaje_usuario: str, historial: list):
 
     - siguiente_fase: "producto" | "asesoria" | "historial" si el cliente lo pidió
       explícitamente; "atencion" mientras siga en "pendiente" o si hubo error.
-    - Al cambiar de fase el historial se devuelve vacío (cada fase arranca con su
-      propio prompt de sistema); si se queda en "atencion" se conserva.
+    - Handoff: si la intención es "producto", ejecuta la búsqueda en este mismo
+      turno (producto.responder) y concatena el resultado a la frase de transición,
+      igual que hace asesoría con "producto_encontrado". El siguiente turno entra
+      directo a la fase producto (o a "tratamiento"/"venta" si producto lo detecta).
+    - Al cambiar de fase (salvo el handoff) el historial se devuelve vacío (cada
+      fase arranca con su propio prompt de sistema); si se queda en "atencion"
+      se conserva.
     """
     if not historial:
         historial = [{"role": "system", "content": PROMPT_SISTEMA_RECEPCION}]
@@ -70,6 +76,21 @@ def responder(mensaje_usuario: str, historial: list):
         historial.append({"role": "assistant", "content": json.dumps(datos)})
 
         siguiente_fase = intencion if intencion in ("producto", "asesoria", "historial") else "atencion"
+
+        if siguiente_fase == "producto":
+            # Handoff: la búsqueda se ejecuta en este mismo turno. Se pasa el
+            # historial sin el JSON interno de clasificación; producto conserva
+            # el contexto para resolver "y bueno?" en los turnos siguientes.
+            try:
+                resultado_producto, siguiente_producto, historial_producto = responder_producto(mensaje_usuario, historial[:-1])
+                respuesta_ia = f"{respuesta_ia}\n\n{resultado_producto}"
+                logger.info("Atención resuelta | intencion=%s | handoff=%s | respuesta=%r",
+                            intencion, siguiente_producto, recortar(respuesta_ia, 200))
+                return respuesta_ia, siguiente_producto, historial_producto
+            except Exception as e:
+                logger.error("Atención | falló la búsqueda al pasar a producto: %s", e, exc_info=True)
+                return respuesta_ia, "producto", []
+
         if siguiente_fase != "atencion":
             historial = []
 

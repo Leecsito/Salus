@@ -59,9 +59,10 @@ Salus/
 │
 ├── producto/                    # FASE 3 — Búsqueda y venta de productos
 │   ├── producto.py              # Orquestador del componente + responder() estándar
-│   ├── extractor.py             # Extrae el sustantivo clave del mensaje con IA
-│   ├── database.py              # Consulta el catálogo de productos en Turso
-│   └── vendedor.py              # Genera la respuesta final de ventas con IA
+│   ├── contexto.py              # Últimos N turnos como transcript para extractor/vendedor
+│   ├── extractor.py             # Extrae término, necesidad e intención (con contexto)
+│   ├── database.py              # Consulta el catálogo en Turso (LIMITE_PRODUCTOS filas)
+│   └── vendedor.py              # Respuesta de ventas conversacional (sin ficha)
 │
 ├── tratamiento/                 # FASE 4 — Tratamiento (ESQUELETO, pendiente)
 │   └── tratamiento.py
@@ -152,11 +153,14 @@ El estado de la conversación vive en la **sesión de Flask**, lo que permite qu
 | Fase actual | Condición de salida | Nueva fase | Efecto adicional |
 |-------------|---------------------|-----------|------------------|
 | `saludo` | siempre | `atencion` | `historial = []`; el primer mensaje solo da contexto al saludo |
-| `atencion` | `intencion ∈ {producto, asesoria, historial}` | la intención | `historial = []` |
+| `atencion` | `intencion == "producto"` | `producto` (o `tratamiento`/`venta` si producto lo detecta) | handoff: búsqueda en el mismo turno + resultado concatenado; conserva el historial de producto |
+| `atencion` | `intencion ∈ {asesoria, historial}` | la intención | `historial = []` |
 | `atencion` | `intencion ∈ {pendiente, error}` | `atencion` | se conserva el historial |
 | `asesoria` | `estado == "producto_encontrado"` | `producto` | `historial = []`; se ejecuta la búsqueda y se concatena al mensaje |
 | `asesoria` | `estado ∈ {consultando, error}` | `asesoria` | se conserva el historial |
-| `producto` | cada mensaje | `producto` | nueva búsqueda independiente (sin historial) |
+| `producto` | `intencion == "tratamiento"` | `tratamiento` | responde la búsqueda y limpia historial |
+| `producto` | `intencion == "venta"` | `venta` | responde la búsqueda y limpia historial |
+| `producto` | resto de mensajes | `producto` | mantiene el historial para resolver referencias ("y bueno?") |
 | `tratamiento` | cada mensaje | `tratamiento` | placeholder (esqueleto) |
 | `venta` | cada mensaje | `venta` | placeholder (esqueleto) |
 | `historial` | cada mensaje | `historial` | mensaje informativo (esqueleto) |
@@ -194,7 +198,8 @@ El estado de la conversación vive en la **sesión de Flask**, lo que permite qu
   - `"historial"` — pide explícitamente abrir/gestionar su expediente clínico.
 - **Regla estructural clave:** si la respuesta del bot contiene una pregunta, la intención DEBE ser `pendiente`. Nunca se asume la intención por mencionar un síntoma.
 - **Salida del modelo:** JSON estricto (`response_format={"type": "json_object"}`), `temperature=0.3`.
-- **Transición:** al cambiar de fase devuelve `historial = []` (cada fase arranca con su propio prompt de sistema); si permanece en `atencion` lo conserva.
+- **Handoff a producto:** si `intencion == "producto"`, ejecuta `producto.responder(mensaje_usuario, historial)` en el mismo turno (igual que asesoría hace con `producto_encontrado`), concatena el resultado a la frase de transición y conserva el historial que devuelve producto (contexto para turnos siguientes). Si la búsqueda falla, se registra el error y se responde solo la frase de transición.
+- **Transición:** al cambiar de fase (salvo el handoff) devuelve `historial = []` (cada fase arranca con su propio prompt de sistema); si permanece en `atencion` lo conserva.
 - **Errores:** delegado en `core/groq_cliente.py`; el módulo registra el error y devuelve un mensaje genérico con `siguiente_fase="atencion"`.
 
 ### [Fase 2] `asesoria/asesoria.py` — Asesor de salud
@@ -240,23 +245,32 @@ El estado de la conversación vive en la **sesión de Flask**, lo que permite qu
 
 ### [Fase 3] `producto/producto.py` — Componente de productos
 
-- **Propósito:** Coordinar el flujo completo de búsqueda de un producto.
-- **Firma estándar:** `responder(mensaje_usuario, historial) → (respuesta, "producto", historial)`. **Nota (async):** la búsqueda real es la corrutina `ejecutar_busqueda_producto`; `responder` la ejecuta con `asyncio.run` porque el orquestador Flask es síncrono.
-- **Corrutina principal:** `async ejecutar_busqueda_producto(mensaje_usuario) → str`.
+- **Propósito:** Conversar sobre productos manteniendo el contexto entre turnos.
+- **Firma estándar:** `responder(mensaje_usuario, historial) → (respuesta, siguiente_fase, historial)`. **Nota (async):** la búsqueda real es la corrutina `ejecutar_busqueda_producto(mensaje, contexto)`, que devuelve `(respuesta, siguiente_fase)`; `responder` la ejecuta con `asyncio.run` porque el orquestador Flask es síncrono.
 - **Pasos:**
-  1. `extraer_termino(mensaje)` (`extractor.py`). Si no hay término → mensaje pidiendo más precisión.
-  2. `await buscar_producto(termino)` (`database.py`) contra Turso.
-  3. `generar_respuesta_vendedor(termino, resultados)` (`vendedor.py`).
+  1. `extraer_termino(mensaje, contexto)` (`extractor.py`) → término, necesidad e intención.
+  2. `await buscar_producto(termino)` (`database.py`) contra Turso (hasta `LIMITE_PRODUCTOS` filas).
+  3. `generar_respuesta_vendedor(mensaje, termino, necesidad, resultados, contexto)` (`vendedor.py`).
+- **Contexto:** `formatear_contexto(historial, HISTORIAL_TURNOS)` (`producto/contexto.py`) construye un transcript plano de los últimos N turnos para extractor y vendedor; así "y bueno?" o "y solo tienen ese?" se resuelven contra el producto del que se venía hablando. `responder` devuelve el historial actualizado con el intercambio del turno.
+- **Sin término:** en vez de un texto fijo, `generar_repregunta(mensaje, contexto)` produce con el LLM una repregunta natural usando la conversación.
+- **Siguiente fase:** `"producto"` normalmente; `"tratamiento"` o `"venta"` si el extractor detecta esas intenciones (cambio de fase funcionando; sus módulos aún son esqueletos). Al salir de `producto` el historial se limpia.
 
-### [Helper] `producto/extractor.py` — Extracción del término
+### [Helper] `producto/contexto.py` — Contexto conversacional
 
-- **Función:** `extraer_termino(mensaje) → str` (sustantivo principal en singular, p. ej. `"colágeno"`, `"pomada"`, `"aspirina"`).
-- **IA:** prompt con 3 ejemplos few-shot; ignora síntomas y frases como "que tengan" o "busco". `temperature=0`, salida JSON (`{"termino": "..."}`). Devuelve `""` si no identifica producto.
+- **Función:** `formatear_contexto(historial, turnos) → str`. Devuelve los últimos `turnos*2` mensajes como transcript plano (`Cliente:` / `Bot:`), ignorando los mensajes de sistema. Si un mensaje del asistente es el JSON interno de atención (`{"respuesta": ...}`), muestra solo la respuesta.
+
+### [Helper] `producto/extractor.py` — Término, necesidad e intención
+
+- **Función:** `extraer_termino(mensaje, contexto="") → dict` con contrato JSON estricto:
+  - `termino` — sustantivo principal en singular (p. ej. `"citrato de magnesio"`); `""` si no se identifica.
+  - `necesidad` — uso, síntoma o motivo mencionado (p. ej. `"estrés"`); `""` si no hay.
+  - `intencion` — `"producto"` | `"tratamiento"` | `"venta"` (cualquier otro valor se normaliza a `"producto"`).
+- **IA:** `temperature=0`, `response_format={"type": "json_object"}`. El prompt incluye ejemplos few-shot, reglas para resolver referencias ("ese", "el otro", "y bueno?") usando el contexto, y la prohibición de meter síntomas dentro de `termino`.
 
 ### [Helper] `producto/database.py` — Consulta a Turso
 
 - **Función:** `async buscar_producto(termino) → list[dict]`.
-- **Consulta SQL** (`CONSULTA_SQL`), con parámetros `%termino%` duplicados:
+- **Consulta SQL** (`CONSULTA_SQL`), con parámetros `%termino%` duplicados y `LIMITE_PRODUCTOS` (default 3, configurable en `core/config.py`):
 
 ```sql
 SELECT nombre_producto, marca, descripcion, precio1, slug,
@@ -265,19 +279,19 @@ SELECT nombre_producto, marca, descripcion, precio1, slug,
        (stock > 0) AS disponible
 FROM productos
 WHERE (nombre_producto LIKE ? OR descripcion LIKE ?) AND oculto = 0
-LIMIT 1
+LIMIT ?
 ```
 
 - **Conexión:** `libsql_client.create_client(url=TURSO_URL, auth_token=TURSO_TOKEN)` como context manager async.
 - **Normalización:** cada fila se convierte en dict con claves `nombre`, `marca`, `descripcion`, `precio`, `enlace`, `para_que_sirve`, `como_tomar`, `dosis`, `via_administracion`, `edad_recomendada`, `contraindicaciones`, `advertencias`, `recomendaciones`, `disponible`.
 - **Enlace:** se construye como `https://naturesgreenec.com/producto/{slug}` (o `None` si no hay slug).
-- **Límites:** `oculto = 0` excluye productos ocultos; `LIMIT 1` devuelve solo el primer producto coincidente (ver §6 y §8).
+- **Límites:** `oculto = 0` excluye productos ocultos; `LIMIT ?` devuelve hasta `LIMITE_PRODUCTOS` coincidencias (default 3).
 
-### [Helper] `producto/vendedor.py` — Respuesta de ventas
+### [Helper] `producto/vendedor.py` — Respuesta de ventas conversacional
 
-- **Función:** `generar_respuesta_vendedor(termino, resultados_db) → str`.
-- **Prompt (`PROMPT_VENDEDOR`):** inyecta el mensaje completo del cliente (el parámetro se llama `termino`, pero `producto.py` le pasa el mensaje original) y el JSON de resultados. Reglas: si la lista está vacía → disculpa cordial y sugerencia de reformular; si hay resultado → **solo** nombre, para qué sirve (1 frase), precio, disponibilidad y enlace; máximo 3-4 líneas; nada de dosis, contraindicaciones ni listas largas.
-- **Nota:** aunque la BD entrega dosis/contraindicaciones al prompt (viajan en el JSON), el prompt ordena no mostrarlas. `temperature=0.3`.
+- **Función:** `generar_respuesta_vendedor(mensaje_usuario, termino, necesidad, resultados_db, contexto="") → str`.
+- **Prompt (`PROMPT_VENDEDOR`):** conversacional y breve (2-4 frases), sin formato de ficha, sin MAYÚSCULAS ni markdown. Compara las opciones en una frase, recomienda **una** según la `necesidad`, y menciona precio y enlace con el formato exacto de los datos (sin cambiar la moneda). Si el producto no está disponible ofrece una alternativa de la lista; si la lista está vacía lo dice con naturalidad y pregunta qué busca. Mantiene la prohibición de dosis, contraindicaciones y advertencias. `temperature=0.3`.
+- **Datos:** recibe hasta `LIMITE_PRODUCTOS` resultados reales de Turso; los campos médicos viajan en el JSON como contexto pero el prompt prohíbe mostrarlos.
 
 ### ~~[Helper] `producto/groq_cliente.py`~~ (unificado)
 
@@ -364,7 +378,7 @@ Columnas consultadas por `producto/database.py` (el esquema completo de la tabla
 | `oculto` | INTEGER | Filtro `oculto = 0` (productos visibles). |
 
 > [!NOTE]
-> La consulta aplica `LIMIT 1`: SALUS muestra **un solo producto** por búsqueda. El prompt del vendedor, en cambio, está escrito para manejar una lista (lista vacía → mensaje de "no encontrado"), por lo que ampliar el límite no requeriría cambios en el prompt.
+> La consulta devuelve hasta `LIMITE_PRODUCTOS` coincidencias (default 3, configurable). El vendedor las recibe todas y compara/recomienda; con lista vacía responde que no lo encontró y pregunta qué busca.
 
 ### B. Contrato del dict `producto` (salida de `buscar_producto`)
 
@@ -409,15 +423,16 @@ Columnas consultadas por `producto/database.py` (el esquema completo de la tabla
 1. **Clasificación de intenciones conservadora (Fase Atención):** el bot nunca asume que el cliente quiere comprar algo solo por mencionar un síntoma. Mientras la petición no sea explícita, la intención es `pendiente`. Si el bot hace una pregunta, la intención también es `pendiente` (regla estructural). Esto evita transiciones de fase prematuras.
 2. **Aislamiento por fase:** al cambiar de fase se descarta el historial anterior. Recepción, Asesoría y Producto usan prompts de sistema distintos; mezclarlos degradaría la calidad de la conversación.
 3. **Asesoría con búsqueda inmediata:** cuando el asesor confirma `producto_encontrado`, el propio componente de asesoría llama a `producto.responder(producto_sugerido, [])` sin esperar un mensaje adicional y **concatena** la recomendación + el resultado comercial en una sola burbuja (`respuesta + "\n\n" + resultado`). Si la búsqueda falla, se devuelve solo la recomendación (el error no se filtra al cliente).
-4. **Venta directa y minimalista:** el vendedor solo expone nombre, utilidad, precio, disponibilidad y enlace. Dosis, contraindicaciones y advertencias **no** se muestran en el chat (aunque la IA las recibe como contexto), lo que reduce el riesgo de dar indicaciones médicas erróneas.
+4. **Venta conversacional y minimalista:** el vendedor conversa en 2-4 frases, compara opciones y recomienda una según la necesidad del cliente; menciona precio y enlace de forma natural, con el formato exacto de los datos. Dosis, contraindicaciones y advertencias **no** se muestran en el chat (aunque la IA las recibe como contexto), lo que reduce el riesgo de dar indicaciones médicas erróneas.
 5. **Rotación de API Keys ante 401/429:** el cliente único `core/groq_cliente.py` recorre `API_KEYS` en orden y espera 2 s entre intentos. El 401 (key inválida o revocada) también dispara el salto a la siguiente key, no solo el 429 (rate limit). Garantiza estabilidad en la capa gratuita de Groq.
 6. **Salida JSON estricta:** recepción, asesoría y extracción usan `response_format={"type": "json_object"}` y parsean con `json.loads`. El contrato de cada prompt es parte del código: cambiarlo exige actualizar el parseo en el mismo commit.
 7. **Errores siempre en JSON:** los handlers globales de `app.py` impiden que Flask devuelva HTML de error, lo que rompería el `response.json()` del frontend.
 8. **Protección de cuota:** el endpoint público `/api/chat` está limitado por IP (30 req/min, 500/día) y los errores internos nunca se muestran al usuario; ambos cambios protegen la cuota gratuita de Groq y evitan filtrar detalles internos.
 9. **Logs efímeros y con datos recortados:** el buffer vive en memoria (no se escribe a disco), guarda las últimas `LOGS_BUFFER` entradas y recorta los textos. Las API keys siempre van enmascaradas. El panel `/api/logs` queda abierto (sin token) para pruebas; si el chat se abre a usuarios reales, conviene restringirlo (ver §8).
-10. **Fase Producto terminal:** una vez en `producto`, cada mensaje se interpreta como una nueva búsqueda; la única forma de volver al saludo es `POST /api/reset` (botón ↺) o una sesión nueva.
+10. **Producto ya no es terminal:** mantiene contexto entre turnos y puede derivar a `tratamiento` o `venta` cuando el cliente muestra esas intenciones; `POST /api/reset` (botón ↺) sigue volviendo al saludo.
 11. **Historial, tratamiento y venta pendientes:** existen como esqueletos en sus carpetas (`historial/`, `tratamiento/`, `venta/`) con `responder` placeholder y TODO; aún no tienen lógica de negocio.
 12. **Saludo inicial:** la conversación arranca en `saludo`; el LLM genera un saludo variado y el primer mensaje del cliente solo se usa como contexto (no se clasifica). A partir del siguiente turno, todo pasa por `atencion`.
+13. **Contexto en producto:** extractor y vendedor reciben los últimos `HISTORIAL_TURNOS` turnos (default 4) mediante `producto/contexto.py`; por eso las referencias ("y bueno?", "y solo tienen ese?", "ese") se resuelven sin repetir el producto. Si el extractor no logra un término, la repregunta también la genera el LLM con ese contexto (nada de texto fijo).
 
 ---
 
@@ -441,7 +456,7 @@ pip install -r requirements.txt
 ### B. Variables de entorno
 
 1. Copiar `.env.example` a `.env`.
-2. Completar: `GROQ_API_KEYS` (una o más keys separadas por coma), `TURSO_URL`, `TURSO_TOKEN` y `SECRET_KEY` (obligatoria; genera una con `python -c "import secrets; print(secrets.token_hex(32))"`). Opcionales: `GROQ_MODEL`, `LOG_LEVEL` y `LOGS_BUFFER`.
+2. Completar: `GROQ_API_KEYS` (una o más keys separadas por coma), `TURSO_URL`, `TURSO_TOKEN` y `SECRET_KEY` (obligatoria; genera una con `python -c "import secrets; print(secrets.token_hex(32))"`). Opcionales: `GROQ_MODEL`, `HISTORIAL_TURNOS`, `LIMITE_PRODUCTOS`, `LOG_LEVEL` y `LOGS_BUFFER`.
 
 > [!TIP]
 > **Cómo ver los logs:** abre el botón de terminal (⎡>_⎦) del header → panel en vivo (con botones Copiar y Limpiar). No requiere token ni URL especial.
@@ -453,6 +468,8 @@ pip install -r requirements.txt
 |----------|-----------|---------|-------------|
 | `GROQ_API_KEYS` | Sí | `gsk_abc,gsk_def` | Keys separadas por coma; se rotan ante 401/429. |
 | `GROQ_MODEL` | No | `openai/gpt-oss-20b` | Modelo Groq a usar. Si se omite, usa el default. |
+| `HISTORIAL_TURNOS` | No | `4` | Turnos recientes que extractor y vendedor usan como contexto. |
+| `LIMITE_PRODUCTOS` | No | `3` | Máximo de productos que devuelve Turso y recibe el vendedor. |
 | `TURSO_URL` | Sí | `https://tu-db.turso.io` | URL de la base Turso. |
 | `TURSO_TOKEN` | Sí | `eyJhbGci…` | Token de Turso. |
 | `SECRET_KEY` | Sí | `token_hex(32)` | Firma de la cookie de sesión. Sin ella la app no arranca. |
@@ -507,15 +524,15 @@ curl -b cookies.txt -X POST http://127.0.0.1:5000/api/reset
 - Errores internos: ya no se exponen al usuario (solo mensajes genéricos; detalle en logs).
 - Rate limiting por IP en `/api/chat` y timeout/workers de Gunicorn configurados.
 - `requirements.txt` con versiones fijadas.
+- Producto conversacional con contexto (sesión actual): historial reciente en extractor y vendedor, repregunta natural por LLM, handoff atención→producto en el mismo turno, `LIMITE_PRODUCTOS` configurable (default 3), vendedor que compara/recomienda sin ficha y deriva a `tratamiento`/`venta`.
 
 **Pendientes:**
 
 1. **Componentes tratamiento, venta e historial sin implementar:** son esqueletos con placeholder y TODO (el historial antes era un inline en `app.py`). Acción sugerida: definir y programar cada flujo de negocio.
-2. **`LIMIT 1` en la búsqueda:** el usuario solo ve el primer producto que coincide con el término; si el primero no es el que esperaba, no hay alternativas. Acción sugerida: parametrizar el límite y dejar que el vendedor liste 2-3 opciones.
-3. **Historial sin truncado:** en conversaciones largas, `session['historial']` crece sin límite (límite práctico: tamaño de la cookie de sesión, ~4 KB). Acción sugerida: recortar a los últimos N turnos.
-4. **Sin pruebas automatizadas ni CI:** no hay tests unitarios de los prompts/parseos ni pipeline de verificación. Acción sugerida: tests de contrato para `atencion.responder`, `asesoria.responder`, `flujo.despachar` y `buscar_producto` con mocks de Groq/Turso.
-5. **Fallback 429 sin backoff exponencial:** se espera un `time.sleep(2)` fijo por key. Es aceptable en la capa gratuita, pero un backoff creciente sería más robusto.
-6. **Panel de logs abierto:** `/api/logs` no pide credenciales y muestra (recortados) los mensajes de los usuarios. Acción sugerida: protegerlo antes de abrir el chat al público.
+2. **Historial sin truncado:** en conversaciones largas, `session['historial']` crece sin límite (límite práctico: tamaño de la cookie de sesión, ~4 KB). `HISTORIAL_TURNOS` limita lo que se **envía** al LLM, no lo que se almacena. Acción sugerida: recortar lo persistido a los últimos N turnos.
+3. **Sin pruebas automatizadas ni CI:** no hay tests unitarios de los prompts/parseos ni pipeline de verificación. Acción sugerida: tests de contrato para `atencion.responder`, `asesoria.responder`, `producto.responder`, `flujo.despachar` y `buscar_producto` con mocks de Groq/Turso.
+4. **Fallback 429 sin backoff exponencial:** se espera un `time.sleep(2)` fijo por key. Es aceptable en la capa gratuita, pero un backoff creciente sería más robusto.
+5. **Panel de logs abierto:** `/api/logs` no pide credenciales y muestra (recortados) los mensajes de los usuarios. Acción sugerida: protegerlo antes de abrir el chat al público.
 
 ---
 

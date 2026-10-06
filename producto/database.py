@@ -6,8 +6,8 @@ por nombre o descripción. Devuelve una lista de diccionarios con los datos.
 import logging
 import libsql_client
 
-# Importa las credenciales desde el módulo central de configuración (core)
-from core.config import TURSO_URL, TURSO_TOKEN
+# Importa las credenciales y parámetros desde el módulo central de configuración (core)
+from core.config import TURSO_URL, TURSO_TOKEN, LIMITE_PRODUCTOS
 from core.logs import recortar
 
 logger = logging.getLogger("salus.turso")
@@ -19,18 +19,18 @@ SELECT nombre_producto, marca, descripcion, precio1, slug,
        (stock > 0) AS disponible
 FROM productos
 WHERE (nombre_producto LIKE ? OR descripcion LIKE ?) AND oculto = 0
-LIMIT 1
+LIMIT ?
 """
 
 async def buscar_producto(termino: str) -> list:
     """
-    Consulta Turso con el término dado.
+    Consulta Turso con el término dado (hasta LIMITE_PRODUCTOS filas).
     Devuelve lista de dicts con los campos del producto, o lista vacía si no hay resultados.
     """
     termino_sql = f"%{termino}%"
-    logger.info("Turso → consulta productos LIKE %r", recortar(termino, 80))
+    logger.info("Turso → consulta productos LIKE %r | limite=%d", recortar(termino, 80), LIMITE_PRODUCTOS)
     async with libsql_client.create_client(url=TURSO_URL, auth_token=TURSO_TOKEN) as db:
-        resultado = await db.execute(CONSULTA_SQL, [termino_sql, termino_sql])
+        resultado = await db.execute(CONSULTA_SQL, [termino_sql, termino_sql, LIMITE_PRODUCTOS])
 
         productos = []
         for fila in resultado.rows:
