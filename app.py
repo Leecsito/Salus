@@ -133,6 +133,15 @@ def ver_logs():
     return jsonify({"logs": buffer_logs.ultimas(limite)})
 
 
+@app.route("/api/logs/clear", methods=["POST"])
+@limiter.limit("10 per minute")
+def limpiar_logs():
+    """Vacía el buffer de logs del servidor (botón Limpiar del panel)."""
+    logger.info("🧹 Buffer de logs vaciado por el usuario")
+    buffer_logs.limpiar()
+    return jsonify({"status": "ok"})
+
+
 @app.route("/api/reset", methods=["POST"])
 def reset():
     logger.info("↺ Sesión reiniciada por el usuario")

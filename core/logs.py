@@ -56,6 +56,11 @@ class BufferLogs(logging.Handler):
         with self._lock:
             return list(self._entradas)[-limite:]
 
+    def limpiar(self):
+        """Vacía el buffer de logs (usado por POST /api/logs/clear)."""
+        with self._lock:
+            self._entradas.clear()
+
 buffer_logs = BufferLogs(int(os.environ.get("LOGS_BUFFER", "500")))
 
 _configurado = False

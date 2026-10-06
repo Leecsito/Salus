@@ -210,9 +210,19 @@ document.addEventListener('DOMContentLoaded', () => {
         detenerLogs();
     });
 
-    logClear.addEventListener('click', () => {
-        ultimasEntradas = [];
-        logEntries.textContent = '';
+    logClear.addEventListener('click', async () => {
+        const textoOriginal = logClear.textContent;
+        try {
+            await fetch('/api/logs/clear', { method: 'POST' });
+            renderAviso('Logs vaciados.');
+            logClear.textContent = 'Limpiado ✓';
+            setTimeout(() => { logClear.textContent = textoOriginal; }, 1200);
+        } catch (error) {
+            ultimasEntradas = [];
+            logEntries.textContent = '';
+            logStatus.textContent = 'sin conexión';
+            logStatus.className = 'log-status error';
+        }
     });
 
     async function copiarLogs() {

@@ -225,6 +225,7 @@ El estado de la conversación vive en la **sesión de Flask**, lo que permite qu
 - **Módulos registrados:** `salus.app`, `salus.flujo`, `salus.saludo`, `salus.atencion`, `salus.asesoria`, `salus.producto`, `salus.extractor`, `salus.vendedor`, `salus.turso`, `salus.tratamiento`, `salus.venta`, `salus.historial`, `salus.groq`.
 - **Seguridad:** las API keys se enmascaran (`gsk_XXXXX…XXXX`); los textos se recortan a 160–200 caracteres; el buffer nunca se escribe a disco. `/api/logs` está **abierto sin token** (pensado para pruebas; ver pendiente en §8).
 - **Niveles:** `INFO` para el flujo normal (prompt, key, decisión, tiempos), `WARNING` para rotaciones de key o búsquedas sin resultados, `ERROR` para excepciones con traceback en consola.
+- **Limpieza:** el botón **Limpiar** del panel llama a `POST /api/logs/clear`, que vacía el buffer del servidor (no solo la vista); la siguiente consulta ya devuelve vacío.
 - **Variables:** `LOG_LEVEL` (default `INFO`), `LOGS_BUFFER` (default `500`).
 
 ### [Orquestador] `flujo.py` — Registro de fases y transiciones
@@ -327,6 +328,7 @@ LIMIT ?
 | `GET /` | Inicializa la sesión si está vacía y renderiza `templates/index.html`. |
 | `POST /api/chat` | Recibe `{"mensaje": "..."}`, despacha según `session['fase']`. Limitado a 30 req/min y 500/día por IP. |
 | `GET /api/logs` | Devuelve las últimas entradas del buffer (`?limit=1..500`). **Abierto, sin token.** |
+| `POST /api/logs/clear` | Vacía el buffer de logs del servidor (botón Limpiar del panel). |
 | `POST /api/reset` | `session.clear()`; devuelve `{"status": "ok"}`. |
 
 - **Sesión:** `app.secret_key = core.config.SECRET_KEY` (única fuente). Al ser obligatoria, `validar_config()` garantiza que nunca se firme con un default público.
@@ -343,7 +345,7 @@ LIMIT ?
   - Convierte cualquier URL de la respuesta en un enlace con texto `Ver Producto` (`target="_blank"`).
   - Botón de reset con `confirm()` → `POST /api/reset` y limpia el DOM.
   - Bloquea input y botón de envío durante la petición (evita dobles envíos).
-  - **Panel de logs:** el botón de terminal abre un panel lateral oscuro que consulta `/api/logs?limit=200` cada 3 s; colorea por nivel (`INFO`/`WARNING`/`ERROR`), muestra hora/módulo/mensaje, auto-scroll configurable y botones **Copiar** (portapapeles con formato `[hora] NIVEL módulo: mensaje`) y **Limpiar** (solo visual). El texto se inserta con `textContent` (sin XSS).
+  - **Panel de logs:** el botón de terminal abre un panel lateral oscuro que consulta `/api/logs?limit=200` cada 3 s; colorea por nivel (`INFO`/`WARNING`/`ERROR`), muestra hora/módulo/mensaje, auto-scroll configurable y botones **Copiar** (portapapeles con formato `[hora] NIVEL módulo: mensaje`) y **Limpiar** (vacía el buffer del servidor vía `POST /api/logs/clear`). El texto se inserta con `textContent` (sin XSS).
 - **`style.css`:** tema verde (`--primary: #10b981`), variables CSS en `:root`, glassmorphism suave (`rgba` + blur), animaciones `fadeIn` / `pulse` / `typing`, burbujas diferenciadas para usuario/bot/sistema, estilos del panel de logs (tema consola oscura, responsive) y scrollbar personalizada.
 
 ### ~~[Legacy] `*/FASE1.py`, `asesoria/groq_cliente.py`, `producto/groq_cliente.py`~~ (eliminados)
