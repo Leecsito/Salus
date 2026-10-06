@@ -24,6 +24,7 @@ PROMPT_EXTRACCION = """Eres el extractor de productos de Nature's Green. Analiza
 REGLAS:
 - Usa la conversación reciente para resolver referencias como "ese", "el otro", "y bueno?", "y solo tienen ese?": en esos casos el término es el producto del que se venía hablando.
 - No incluyas síntomas, usos ni frases como "para el estrés" dentro de "termino".
+- Conserva los nombres compuestos completos (p. ej. "citrato de magnesio", "omega 3", "vitamina c"): no los recortes a una sola palabra.
 - Ignora verbos y frases como "busco", "tienen", "cuáles dispone".
 
 EJEMPLOS:

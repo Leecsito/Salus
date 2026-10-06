@@ -293,7 +293,14 @@ LIMIT ?
 ### [Helper] `producto/vendedor.py` — Respuesta de ventas conversacional
 
 - **Función:** `generar_respuesta_vendedor(mensaje_usuario, termino, necesidad, resultados_db, contexto="") → str`.
-- **Prompt (`PROMPT_VENDEDOR`):** conversacional y breve (2-4 frases), sin formato de ficha, sin MAYÚSCULAS ni markdown. Compara las opciones en una frase, recomienda **una** según la `necesidad`, y menciona precio y enlace con el formato exacto de los datos (sin cambiar la moneda). Si el producto no está disponible ofrece una alternativa de la lista; si la lista está vacía lo dice con naturalidad y pregunta qué busca. Mantiene la prohibición de dosis, contraindicaciones y advertencias. `temperature=0.3`.
+- **Prompt (`PROMPT_VENDEDOR`):** conversacional y breve (2-4 frases), sin ficha, MAYÚSCULAS, markdown ni viñetas. Reglas clave:
+  - **Respeta la preferencia** del cliente (marca, formato, presentación); si no está, lo dice y ofrece la más parecida.
+  - Al comparar, **menciona precio y enlace de cada producto** que nombre; el precio ya viene formateado con `$` desde `database.py`.
+  - Cita `descripcion`/`para_que_sirve` sin cambiar palabras; usa la presentación (tamaño, formato) si está en los datos.
+  - Si `marca` viene sucia (POLVO, CAPS, EXCLUSIVO, TV, tamaños…), no la presenta como marca.
+  - Prohibido mencionar dosis, cantidades, frecuencia o modos de uso (`como_tomar`, `dosis`, `via_administracion`, `contraindicaciones`, `advertencias`).
+  - No promete acciones inexistentes (carrito, reservar, enviar) y varía el cierre (sin repetir "¿Te gustaría…?").
+  - Con lista vacía: lo dice y pregunta qué busca. `temperature=0.3`.
 - **Datos:** recibe hasta `LIMITE_PRODUCTOS` resultados reales de Turso; los campos médicos viajan en el JSON como contexto pero el prompt prohíbe mostrarlos.
 
 ### ~~[Helper] `producto/groq_cliente.py`~~ (unificado)
@@ -368,7 +375,7 @@ Columnas consultadas por `producto/database.py` (el esquema completo de la tabla
 | `nombre_producto` | TEXT | Nombre mostrado y campo de búsqueda `LIKE`. |
 | `marca` | TEXT | Se pasa al prompt del vendedor. |
 | `descripcion` | TEXT | Campo de búsqueda `LIKE` y contexto para la IA. |
-| `precio1` | REAL/INTEGER | Precio que el vendedor comunica (clave `precio`). |
+| `precio1` | REAL/INTEGER | Precio que el vendedor comunica; se formatea como `$12.00` (clave `precio`). |
 | `slug` | TEXT | Construye `https://www.naturesgreenec.com/producto/{slug}`. |
 | `para_que_sirve` | TEXT | Contexto para el vendedor (1 frase en la respuesta). |
 | `como_tomar` | TEXT | Contexto interno; el prompt prohíbe mostrarlo. |
@@ -393,7 +400,7 @@ Columnas consultadas por `producto/database.py` (el esquema completo de la tabla
 
 ```json
 {
-  "nombre": "…", "marca": "…", "descripcion": "…", "precio": 0,
+  "nombre": "…", "marca": "…", "descripcion": "…", "precio": "$12.00",
   "enlace": "https://www.naturesgreenec.com/producto/slug",
   "para_que_sirve": "…", "como_tomar": "…", "dosis": "…",
   "via_administracion": "…", "edad_recomendada": "…",
@@ -432,7 +439,7 @@ Columnas consultadas por `producto/database.py` (el esquema completo de la tabla
 1. **Clasificación de intenciones conservadora (Fase Atención):** el bot nunca asume que el cliente quiere comprar algo solo por mencionar un síntoma. Mientras la petición no sea explícita, la intención es `pendiente`. Si el bot hace una pregunta, la intención también es `pendiente` (regla estructural). Esto evita transiciones de fase prematuras.
 2. **Aislamiento por fase:** al cambiar de fase se descarta el historial anterior. Recepción, Asesoría y Producto usan prompts de sistema distintos; mezclarlos degradaría la calidad de la conversación.
 3. **Asesoría con búsqueda inmediata:** cuando el asesor confirma `producto_encontrado`, el propio componente de asesoría llama a `producto.responder(producto_sugerido, [])` sin esperar un mensaje adicional y **concatena** la recomendación + el resultado comercial en una sola burbuja (`respuesta + "\n\n" + resultado`). Si la búsqueda falla, se devuelve solo la recomendación (el error no se filtra al cliente).
-4. **Venta conversacional y minimalista:** el vendedor conversa en 2-4 frases, compara opciones y recomienda una según la necesidad del cliente; menciona precio y enlace de forma natural, con el formato exacto de los datos. Dosis, contraindicaciones y advertencias **no** se muestran en el chat (aunque la IA las recibe como contexto), lo que reduce el riesgo de dar indicaciones médicas erróneas.
+4. **Venta conversacional y minimalista:** el vendedor conversa en 2-4 frases, respeta la preferencia del cliente, compara opciones y recomienda una; menciona el precio (ya formateado con `$`) y el enlace de cada producto que nombra. Dosis, cantidades, contraindicaciones y advertencias **no** se muestran en el chat (aunque la IA las recibe como contexto), lo que reduce el riesgo de dar indicaciones médicas erróneas. Tampoco promete acciones que no existen (carrito, reservas).
 5. **Rotación de API Keys ante 401/429:** el cliente único `core/groq_cliente.py` recorre `API_KEYS` en orden y espera 2 s entre intentos. El 401 (key inválida o revocada) también dispara el salto a la siguiente key, no solo el 429 (rate limit). Garantiza estabilidad en la capa gratuita de Groq.
 6. **Salida JSON estricta:** recepción, asesoría y extracción usan `response_format={"type": "json_object"}` y parsean con `json.loads`. El contrato de cada prompt es parte del código: cambiarlo exige actualizar el parseo en el mismo commit.
 7. **Errores siempre en JSON:** los handlers globales de `app.py` impiden que Flask devuelva HTML de error, lo que rompería el `response.json()` del frontend.
@@ -534,7 +541,7 @@ curl -b cookies.txt -X POST http://127.0.0.1:5000/api/reset
 - Errores internos: ya no se exponen al usuario (solo mensajes genéricos; detalle en logs).
 - Rate limiting por IP en `/api/chat` y timeout/workers de Gunicorn configurados.
 - `requirements.txt` con versiones fijadas.
-- Producto conversacional con contexto (sesión actual): historial reciente en extractor y vendedor, repregunta natural por LLM, handoff atención→producto en el mismo turno, `LIMITE_PRODUCTOS` configurable (default 5), ranking por prioridad de campos, búsqueda por nombre/descripción/marca, enlaces con `www` y limpieza de puntuación, vendedor que compara/recomienda sin ficha y deriva a `tratamiento`/`venta`.
+- Producto conversacional con contexto (sesión actual): historial reciente en extractor y vendedor, repregunta natural por LLM, handoff atención→producto en el mismo turno, `LIMITE_PRODUCTOS` configurable (default 5), ranking por prioridad de campos, búsqueda por nombre/descripción/marca, enlaces con `www` y limpieza de puntuación, precio formateado con `$`, vendedor que respeta preferencias, compara/recomienda sin ficha y deriva a `tratamiento`/`venta`.
 
 **Pendientes:**
 

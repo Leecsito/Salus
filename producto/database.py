@@ -52,7 +52,7 @@ async def buscar_producto(termino: str) -> list:
                 "nombre":            fila[0],
                 "marca":             fila[1],
                 "descripcion":       fila[2],
-                "precio":            fila[3],
+                "precio":            f"${fila[3]:.2f}" if isinstance(fila[3], (int, float)) else fila[3],
                 "enlace":            f"https://www.naturesgreenec.com/producto/{slug}" if slug else None,
                 "para_que_sirve":    fila[5],
                 "como_tomar":        fila[6],
