@@ -240,7 +240,8 @@ El estado de la conversación vive en la **sesión de Flask**, lo que permite qu
 
 - **Propósito:** generar un saludo natural y distinto cada vez, con tono humano de una persona real de Nature's Green.
 - **Firma:** `responder(mensaje_usuario, historial) → (saludo, "atencion", [])`.
-- **Prompt (`PROMPT_SISTEMA_SALUDO`):** máximo 2 frases, cálido y variado; prohíbe presentarse como bot/IA y las fórmulas repetidas; ordena reaccionar con naturalidad al primer mensaje del cliente.
+- **Prompt (`PROMPT_SISTEMA_SALUDO`):** máximo 2 frases, cálido y natural; es **solo bienvenida**: no asume que el cliente busca un producto ni pregunta "¿qué producto buscas?"; ofrece ayuda abierta ("¿qué se le ofrece?", "¿en qué le podemos ayudar?", "¿qué necesita?"). Prohíbe presentarse como bot/IA y las fórmulas repetidas.
+- **Variedad forzada:** en cada llamada se sortea un `enfoque` de la tupla `ENFOQUES` y se añade al prompt (p. ej. "sin pregunta", "con detalle cálido", "pregunta distinta a la habitual"); así la estructura no se repite entre conversaciones. El enfoque elegido queda registrado en los logs.
 - **Parámetros:** `temperature=0.9` (favorece la variedad), sin `response_format` (texto libre).
 - **Particularidad:** al ser la `FASE_INICIAL`, el primer mensaje del cliente solo da contexto al saludo y no se clasifica; siempre devuelve `historial = []` para que `atencion` arranque con su propio prompt de sistema.
 
@@ -433,7 +434,7 @@ Columnas consultadas por `producto/database.py` (el esquema completo de la tabla
 9. **Logs efímeros y con datos recortados:** el buffer vive en memoria (no se escribe a disco), guarda las últimas `LOGS_BUFFER` entradas y recorta los textos. Las API keys siempre van enmascaradas. El panel `/api/logs` queda abierto (sin token) para pruebas; si el chat se abre a usuarios reales, conviene restringirlo (ver §8).
 10. **Producto ya no es terminal:** mantiene contexto entre turnos y puede derivar a `tratamiento` o `venta` cuando el cliente muestra esas intenciones; `POST /api/reset` (botón ↺) sigue volviendo al saludo.
 11. **Historial, tratamiento y venta pendientes:** existen como esqueletos en sus carpetas (`historial/`, `tratamiento/`, `venta/`) con `responder` placeholder y TODO; aún no tienen lógica de negocio.
-12. **Saludo inicial:** la conversación arranca en `saludo`; el LLM genera un saludo variado y el primer mensaje del cliente solo se usa como contexto (no se clasifica). A partir del siguiente turno, todo pasa por `atencion`.
+12. **Saludo inicial:** la conversación arranca en `saludo`; el LLM genera una bienvenida variada (enfoques aleatorios) sin asumir productos, y el primer mensaje del cliente solo se usa como contexto (no se clasifica). A partir del siguiente turno, todo pasa por `atencion`.
 13. **Contexto en producto:** extractor y vendedor reciben los últimos `HISTORIAL_TURNOS` turnos (default 4) mediante `producto/contexto.py`; por eso las referencias ("y bueno?", "y solo tienen ese?", "ese") se resuelven sin repetir el producto. Si el extractor no logra un término, la repregunta también la genera el LLM con ese contexto (nada de texto fijo).
 
 ---
