@@ -1,10 +1,10 @@
 """
-config.py — Configuración centralizada del proyecto SALUS.
+config.py — Configuración centralizada del proyecto SALUS (core).
 
 Este es el ÚNICO lugar donde se leen las variables de entorno.
 Todos los demás módulos importan desde aquí:
 
-    from config import API_KEYS, TURSO_URL, TURSO_TOKEN
+    from core.config import API_KEYS, TURSO_URL, TURSO_TOKEN
 
 Para desarrollo local: crea un archivo .env en la raíz del proyecto (ver .env.example).
 Para producción (Render): define las variables en el dashboard de Render → Environment.

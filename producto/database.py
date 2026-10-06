@@ -4,14 +4,11 @@ Responsabilidad: conectarse a Turso (SQLite serverless) y buscar productos
 por nombre o descripción. Devuelve una lista de diccionarios con los datos.
 """
 import logging
-import os
-import sys
 import libsql_client
 
-# Importa las credenciales desde el módulo central de configuración
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from config import TURSO_URL, TURSO_TOKEN
-from logs import recortar
+# Importa las credenciales desde el módulo central de configuración (core)
+from core.config import TURSO_URL, TURSO_TOKEN
+from core.logs import recortar
 
 logger = logging.getLogger("salus.turso")
 

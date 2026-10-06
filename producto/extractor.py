@@ -5,8 +5,8 @@ mensaje del usuario, descartando frases de síntomas o verbos de acción.
 """
 import json
 import logging
-from groq_cliente import llamar_groq
-from logs import recortar
+from core.groq_cliente import llamar_groq
+from core.logs import recortar
 
 logger = logging.getLogger("salus.extractor")
 

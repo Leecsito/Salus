@@ -1,12 +1,14 @@
 """
-asesoria.py — Asesor de salud de SALUS.
+asesoria.py — Componente de asesoría de salud de SALUS.
+
 Responsabilidad: mantener la conversación con el cliente para diagnosticar
 su necesidad y recomendar un tipo de producto específico.
 """
 import json
 import logging
-from groq_cliente import llamar_groq
-from logs import recortar
+from core.groq_cliente import llamar_groq
+from core.logs import recortar
+from producto.producto import responder as responder_producto
 
 logger = logging.getLogger("salus.asesoria")
 
@@ -24,12 +26,14 @@ Reglas:
   En ese caso, en "producto_sugerido" pon un sustantivo genérico clave (ej. "pomada", "colágeno", "jarabe") para buscar en la BD.
 """
 
-def responder_asesoria(mensaje_usuario: str, historial: list):
+def responder(mensaje_usuario: str, historial: list):
     """
-    Recibe un mensaje del usuario y el historial acumulado.
-    Devuelve: (respuesta_ia, estado, producto_sugerido, historial_actualizado)
-    - estado: "consultando" | "producto_encontrado" | "error"
-    - producto_sugerido: string con el tipo de producto si estado == "producto_encontrado"
+    Firma estándar de componente: (mensaje, historial) -> (respuesta, siguiente_fase, historial).
+
+    - Si el asesor confirma "producto_encontrado", ejecuta de inmediato la búsqueda
+      del producto sugerido (componente producto), concatena el resultado comercial
+      a la recomendación y devuelve siguiente_fase="producto" con historial vacío.
+    - En cualquier otro caso permanece en "asesoria" conservando el historial.
     """
     if not historial:
         historial = [{"role": "system", "content": PROMPT_SISTEMA}]
@@ -55,8 +59,17 @@ def responder_asesoria(mensaje_usuario: str, historial: list):
             "Asesoría resuelta | estado=%s | producto_sugerido=%r | respuesta=%r",
             estado, producto_sugerido, recortar(respuesta_ia, 200)
         )
-        return respuesta_ia, estado, producto_sugerido, historial
+
+        if estado == "producto_encontrado" and producto_sugerido:
+            try:
+                resultado_producto, _, _ = responder_producto(producto_sugerido, [])
+                respuesta_ia = f"{respuesta_ia}\n\n{resultado_producto}"
+            except Exception as e:
+                logger.error("Asesoría | falló la búsqueda tras recomendar: %s", e, exc_info=True)
+            return respuesta_ia, "producto", []
+
+        return respuesta_ia, "asesoria", historial
 
     except Exception as e:
         logger.error("Asesoría falló: %s", e, exc_info=True)
-        return "Lo siento, tuve un problema para responder. Intenta de nuevo en unos segundos.", "error", "", historial
+        return "Lo siento, tuve un problema para responder. Intenta de nuevo en unos segundos.", "asesoria", historial

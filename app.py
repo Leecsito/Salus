@@ -2,20 +2,13 @@ from flask import Flask, render_template, request, jsonify, session
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.exceptions import HTTPException
-import asyncio
 import logging
 import os
-import sys
 import time
 
-# Agregar la ruta actual para las importaciones
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
-from config import SECRET_KEY, validar_config
-from logs import buffer_logs, configurar_logging, recortar
-from main import responder_recepcion
-from asesoria.asesoria import responder_asesoria
-from producto.producto import ejecutar_busqueda_producto as ejecutar_producto
+from core.config import SECRET_KEY, validar_config
+from core.logs import buffer_logs, configurar_logging, recortar
+import flujo
 
 configurar_logging()
 logger = logging.getLogger("salus.app")
@@ -69,7 +62,7 @@ def unhandled_exception(e):
 @app.route("/")
 def index():
     if 'fase' not in session:
-        session['fase'] = 'recepcion'
+        session['fase'] = flujo.FASE_INICIAL
         session['historial'] = []
     return render_template("index.html")
 
@@ -77,8 +70,8 @@ def index():
 @limiter.limit("30 per minute;500 per day")
 def chat():
     """
-    Endpoint síncrono principal del chatbot.
-    La corrutina async de producto/producto.py se ejecuta con asyncio.run().
+    Endpoint del chat: valida la petición, delega en el orquestador (flujo.py)
+    y persiste la fase/historial resultantes en la sesión.
     """
     data = request.get_json(force=True, silent=True)
     if not data:
@@ -92,10 +85,10 @@ def chat():
 
     # Inicializar sesión si está vacía (ej. primera visita o sesión expirada)
     if 'fase' not in session:
-        session['fase'] = 'recepcion'
+        session['fase'] = flujo.FASE_INICIAL
         session['historial'] = []
 
-    fase_actual = session.get('fase', 'recepcion')
+    fase_actual = session.get('fase', flujo.FASE_INICIAL)
     historial = session.get('historial', [])
 
     inicio = time.perf_counter()
@@ -107,51 +100,11 @@ def chat():
         return jsonify({"respuesta": respuesta, "fase": fase})
 
     try:
-        if fase_actual == 'recepcion':
-            respuesta_ia, intencion, nuevo_historial = responder_recepcion(mensaje_usuario, historial)
-            session['historial'] = nuevo_historial
-
-            if intencion not in ("pendiente", "error"):
-                session['fase'] = intencion
-                session['historial'] = []
-
-            session.modified = True
-            return ok(respuesta_ia, session['fase'])
-
-        elif fase_actual == 'asesoria':
-            respuesta_ia, estado, producto_sugerido, nuevo_historial = responder_asesoria(mensaje_usuario, historial)
-            session['historial'] = nuevo_historial
-
-            if estado == "producto_encontrado" and producto_sugerido:
-                session['fase'] = 'producto'
-                session['historial'] = []
-                try:
-                    resultado_producto = asyncio.run(ejecutar_producto(producto_sugerido))
-                    respuesta_completa = f"{respuesta_ia}\n\n{resultado_producto}"
-                except Exception as e_prod:
-                    print(f"[ERROR al buscar producto tras asesoría]: {e_prod}")
-                    respuesta_completa = respuesta_ia
-
-                session.modified = True
-                return ok(respuesta_completa, "producto")
-
-            session.modified = True
-            return ok(respuesta_ia, session['fase'])
-
-        elif fase_actual == 'producto':
-            respuesta_ia = asyncio.run(ejecutar_producto(mensaje_usuario))
-            session.modified = True
-            return ok(respuesta_ia, session['fase'])
-
-        elif fase_actual == 'historial':
-            return jsonify({
-                "respuesta": "El módulo de historial clínico está en desarrollo. ¿Puedo ayudarte con algo más?",
-                "fase": session['fase']
-            })
-
-        else:
-            session.clear()
-            return jsonify({"respuesta": "Sesión reiniciada. ¿En qué te puedo ayudar?", "fase": "recepcion"})
+        respuesta, nueva_fase, nuevo_historial = flujo.despachar(fase_actual, mensaje_usuario, historial)
+        session['fase'] = nueva_fase
+        session['historial'] = nuevo_historial
+        session.modified = True
+        return ok(respuesta, nueva_fase)
 
     except Exception as e:
         logger.error("Error procesando mensaje: %s", e, exc_info=True)

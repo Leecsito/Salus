@@ -1,5 +1,5 @@
 """
-groq_cliente.py — Cliente compartido de Groq para todo el proyecto SALUS.
+groq_cliente.py — Cliente compartido de Groq para todo el proyecto SALUS (core).
 
 Único lugar que crea clientes Groq y maneja el fallback entre API keys:
 - HTTP 401 (key inválida o revocada) → salta a la siguiente key
@@ -7,14 +7,11 @@ groq_cliente.py — Cliente compartido de Groq para todo el proyecto SALUS.
 Si todas las keys fallan, relanza la excepción.
 """
 import logging
-import os
-import sys
 import time
 from groq import Groq, APIError
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import API_KEYS, MODELO
-from logs import mascara_key
+from core.config import API_KEYS, MODELO
+from core.logs import mascara_key
 
 logger = logging.getLogger("salus.groq")
 
