@@ -272,7 +272,7 @@ El estado de la conversación vive en la **sesión de Flask**, lo que permite qu
 ### [Helper] `producto/database.py` — Consulta a Turso
 
 - **Función:** `async buscar_producto(termino) → list[dict]`.
-- **Consulta SQL** (`CONSULTA_SQL`), con parámetros `%termino%` triplicados (nombre, descripción y marca) y `LIMITE_PRODUCTOS` (default 5, configurable en `core/config.py`):
+- **Consulta SQL** (`CONSULTA_SQL`), con parámetros `%termino%` triplicados (nombre, descripción y marca) y `LIMITE_PRODUCTOS` (default 8, configurable en `core/config.py`):
 
 ```sql
 SELECT nombre_producto, marca, descripcion, precio1, slug,
@@ -288,20 +288,21 @@ LIMIT ?
 - **Normalización:** cada fila se convierte en dict con claves `nombre`, `marca`, `descripcion`, `precio`, `enlace`, `para_que_sirve`, `como_tomar`, `dosis`, `via_administracion`, `edad_recomendada`, `contraindicaciones`, `advertencias`, `recomendaciones`, `disponible`.
 - **Enlace:** se construye como `https://www.naturesgreenec.com/producto/{slug}` (o `None` si no hay slug).
 - **Ranking:** los resultados se ordenan por prioridad = número de campos clave presentes (`foto_url`, `video_url`, `info_completada`, `categoria_id`, `star`/`superstar`). El stock **no** influye en el orden (solo informa `disponible`). Así el vendedor recibe los productos más completos, no los primeros que aparezcan.
-- **Límites:** `oculto = 0` excluye productos ocultos; `LIMIT ?` devuelve hasta `LIMITE_PRODUCTOS` coincidencias (default 5), ya ordenadas por prioridad.
+- **Límites:** `oculto = 0` excluye productos ocultos; `LIMIT ?` devuelve hasta `LIMITE_PRODUCTOS` coincidencias (default 8), ya ordenadas por prioridad. No se filtra por marca en SQL: todas las variantes llegan al LLM para que identifique la específica.
 
 ### [Helper] `producto/vendedor.py` — Respuesta de ventas conversacional
 
 - **Función:** `generar_respuesta_vendedor(mensaje_usuario, termino, necesidad, resultados_db, contexto="") → str`.
 - **Prompt (`PROMPT_VENDEDOR`):** conversacional y breve (2-4 frases), sin ficha, MAYÚSCULAS, markdown ni viñetas. Reglas clave:
-  - **Respeta la preferencia** del cliente (marca, formato, presentación); si no está, lo dice y ofrece la más parecida.
+  - **Pregunta antes de volcar opciones:** si el cliente solo nombra el producto y no dio formato/marca, confirma que lo hay, comenta que hay varias presentaciones y precios, y pregunta cuál prefiere (polvo, cápsulas, líquido, jarabe…) o si busca una marca. Si pide ver las opciones ("¿cuáles tienen?"), las lista breve (nombre, presentación, precio, enlace; máximo 3-4).
+  - **Respeta la preferencia**: si la marca/formato pedido está en los datos, lo confirma con precio y enlace ANTES de cualquier alternativa — incluso si pregunta en negativo ("¿no tienen de X?"). Si no está, lo dice y ofrece la más parecida.
   - Al comparar, **menciona precio y enlace de cada producto** que nombre; el precio ya viene formateado con `$` desde `database.py`.
   - Cita `descripcion`/`para_que_sirve` sin cambiar palabras; usa la presentación (tamaño, formato) si está en los datos.
   - Si `marca` viene sucia (POLVO, CAPS, EXCLUSIVO, TV, tamaños…), no la presenta como marca.
-  - Prohibido mencionar dosis, cantidades, frecuencia o modos de uso (`como_tomar`, `dosis`, `via_administracion`, `contraindicaciones`, `advertencias`).
+  - No menciona dosis, cantidades, frecuencia ni modos de uso (esos campos **ni se le envían**).
   - No promete acciones inexistentes (carrito, reservar, enviar) y varía el cierre (sin repetir "¿Te gustaría…?").
   - Con lista vacía: lo dice y pregunta qué busca. `temperature=0.3`.
-- **Datos:** recibe hasta `LIMITE_PRODUCTOS` resultados reales de Turso; los campos médicos viajan en el JSON como contexto pero el prompt prohíbe mostrarlos.
+- **Datos:** recibe hasta `LIMITE_PRODUCTOS` resultados reales de Turso, pero con una **vista reducida** (`CAMPOS_VENDEDOR`: nombre, marca, descripción, para qué sirve, precio, enlace y disponibilidad). Los campos médicos (`como_tomar`, `dosis`, `via_administracion`, `contraindicaciones`, `advertencias`, `recomendaciones`) **ni se envían al LLM**: evita fugas de dosis y deja espacio para más opciones.
 
 ### ~~[Helper] `producto/groq_cliente.py`~~ (unificado)
 
@@ -378,13 +379,13 @@ Columnas consultadas por `producto/database.py` (el esquema completo de la tabla
 | `precio1` | REAL/INTEGER | Precio que el vendedor comunica; se formatea como `$12.00` (clave `precio`). |
 | `slug` | TEXT | Construye `https://www.naturesgreenec.com/producto/{slug}`. |
 | `para_que_sirve` | TEXT | Contexto para el vendedor (1 frase en la respuesta). |
-| `como_tomar` | TEXT | Contexto interno; el prompt prohíbe mostrarlo. |
-| `dosis` | TEXT | Contexto interno; el prompt prohíbe mostrarlo. |
-| `via_administracion` | TEXT | Contexto interno. |
-| `edad_recomendada` | TEXT | Contexto interno. |
-| `contraindicaciones` | TEXT | Contexto interno; el prompt prohíbe mostrarlo. |
-| `advertencias` | TEXT | Contexto interno. |
-| `recomendaciones` | TEXT | Contexto interno. |
+| `como_tomar` | TEXT | **No se envía al vendedor** (evita fugas de dosis). |
+| `dosis` | TEXT | **No se envía al vendedor**. |
+| `via_administracion` | TEXT | **No se envía al vendedor**. |
+| `edad_recomendada` | TEXT | **No se envía al vendedor**. |
+| `contraindicaciones` | TEXT | **No se envía al vendedor**. |
+| `advertencias` | TEXT | **No se envía al vendedor**. |
+| `recomendaciones` | TEXT | **No se envía al vendedor**. |
 | `stock` | INTEGER | Se transforma en `disponible = (stock > 0)` (informativo; no influye en el ranking). |
 | `oculto` | INTEGER | Filtro `oculto = 0` (productos visibles). |
 | `foto_url` | TEXT | Ranking: +1 si tiene foto. |
@@ -394,7 +395,7 @@ Columnas consultadas por `producto/database.py` (el esquema completo de la tabla
 | `star` / `superstar` | INTEGER | Ranking: +1 si es destacado (`star` o `superstar` > 0). |
 
 > [!NOTE]
-> La consulta devuelve hasta `LIMITE_PRODUCTOS` coincidencias (default 5, configurable) **ordenadas por prioridad** (campos clave completos). El vendedor las recibe todas y compara/recomienda; con lista vacía responde que no lo encontró y pregunta qué busca.
+> La consulta devuelve hasta `LIMITE_PRODUCTOS` coincidencias (default 8, configurable) **ordenadas por prioridad** (campos clave completos). El vendedor las recibe todas (vista reducida) y compara/recomienda; con lista vacía responde que no lo encontró y pregunta qué busca.
 
 ### B. Contrato del dict `producto` (salida de `buscar_producto`)
 
@@ -439,7 +440,7 @@ Columnas consultadas por `producto/database.py` (el esquema completo de la tabla
 1. **Clasificación de intenciones conservadora (Fase Atención):** el bot nunca asume que el cliente quiere comprar algo solo por mencionar un síntoma. Mientras la petición no sea explícita, la intención es `pendiente`. Si el bot hace una pregunta, la intención también es `pendiente` (regla estructural). Esto evita transiciones de fase prematuras.
 2. **Aislamiento por fase:** al cambiar de fase se descarta el historial anterior. Recepción, Asesoría y Producto usan prompts de sistema distintos; mezclarlos degradaría la calidad de la conversación.
 3. **Asesoría con búsqueda inmediata:** cuando el asesor confirma `producto_encontrado`, el propio componente de asesoría llama a `producto.responder(producto_sugerido, [])` sin esperar un mensaje adicional y **concatena** la recomendación + el resultado comercial en una sola burbuja (`respuesta + "\n\n" + resultado`). Si la búsqueda falla, se devuelve solo la recomendación (el error no se filtra al cliente).
-4. **Venta conversacional y minimalista:** el vendedor conversa en 2-4 frases, respeta la preferencia del cliente, compara opciones y recomienda una; menciona el precio (ya formateado con `$`) y el enlace de cada producto que nombra. Dosis, cantidades, contraindicaciones y advertencias **no** se muestran en el chat (aunque la IA las recibe como contexto), lo que reduce el riesgo de dar indicaciones médicas erróneas. Tampoco promete acciones que no existen (carrito, reservas).
+4. **Venta conversacional y minimalista:** el vendedor conversa en 2-4 frases, pregunta la presentación/marca cuando el cliente solo nombra el producto, respeta la preferencia, compara opciones y recomienda una; menciona el precio (ya formateado con `$`) y el enlace de cada producto que nombra. Dosis, cantidades, contraindicaciones y advertencias **no** se muestran en el chat porque **esos campos ni se le envían al LLM**, lo que elimina el riesgo de dar indicaciones médicas erróneas. Tampoco promete acciones que no existen (carrito, reservas).
 5. **Rotación de API Keys ante 401/429:** el cliente único `core/groq_cliente.py` recorre `API_KEYS` en orden y espera 2 s entre intentos. El 401 (key inválida o revocada) también dispara el salto a la siguiente key, no solo el 429 (rate limit). Garantiza estabilidad en la capa gratuita de Groq.
 6. **Salida JSON estricta:** recepción, asesoría y extracción usan `response_format={"type": "json_object"}` y parsean con `json.loads`. El contrato de cada prompt es parte del código: cambiarlo exige actualizar el parseo en el mismo commit.
 7. **Errores siempre en JSON:** los handlers globales de `app.py` impiden que Flask devuelva HTML de error, lo que rompería el `response.json()` del frontend.
@@ -486,7 +487,7 @@ pip install -r requirements.txt
 | `GROQ_API_KEYS` | Sí | `gsk_abc,gsk_def` | Keys separadas por coma; se rotan ante 401/429. |
 | `GROQ_MODEL` | No | `openai/gpt-oss-20b` | Modelo Groq a usar. Si se omite, usa el default. |
 | `HISTORIAL_TURNOS` | No | `4` | Turnos recientes que extractor y vendedor usan como contexto. |
-| `LIMITE_PRODUCTOS` | No | `5` | Máximo de productos que devuelve Turso y recibe el vendedor. |
+| `LIMITE_PRODUCTOS` | No | `8` | Máximo de productos que devuelve Turso y recibe el vendedor. |
 | `TURSO_URL` | Sí | `https://tu-db.turso.io` | URL de la base Turso. |
 | `TURSO_TOKEN` | Sí | `eyJhbGci…` | Token de Turso. |
 | `SECRET_KEY` | Sí | `token_hex(32)` | Firma de la cookie de sesión. Sin ella la app no arranca. |
@@ -541,7 +542,7 @@ curl -b cookies.txt -X POST http://127.0.0.1:5000/api/reset
 - Errores internos: ya no se exponen al usuario (solo mensajes genéricos; detalle en logs).
 - Rate limiting por IP en `/api/chat` y timeout/workers de Gunicorn configurados.
 - `requirements.txt` con versiones fijadas.
-- Producto conversacional con contexto (sesión actual): historial reciente en extractor y vendedor, repregunta natural por LLM, handoff atención→producto en el mismo turno, `LIMITE_PRODUCTOS` configurable (default 5), ranking por prioridad de campos, búsqueda por nombre/descripción/marca, enlaces con `www` y limpieza de puntuación, precio formateado con `$`, vendedor que respeta preferencias, compara/recomienda sin ficha y deriva a `tratamiento`/`venta`.
+- Producto conversacional con contexto (sesión actual): historial reciente en extractor y vendedor, repregunta natural por LLM, handoff atención→producto en el mismo turno, `LIMITE_PRODUCTOS` configurable (default 8), ranking por prioridad de campos, búsqueda por nombre/descripción/marca, enlaces con `www` y limpieza de puntuación, precio formateado con `$`, vista reducida sin campos médicos, vendedor que pregunta presentación/marca antes de volcar opciones, respeta preferencias, compara/recomienda sin ficha y deriva a `tratamiento`/`venta`.
 
 **Pendientes:**
 
