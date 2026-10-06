@@ -4,7 +4,7 @@
 **Tipo:** Aplicación web Flask con IA conversacional multi-fase (Saludo → Atención → Asesoría → Producto, con componentes futuros de tratamiento, venta e historial)  
 **Entorno de ejecución:** Python 3.11 (Windows / Linux)  
 **Despliegue:** Render — https://salus-ctix.onrender.com  
-**Tienda en línea:** https://naturesgreenec.com  
+**Tienda en línea:** https://www.naturesgreenec.com  
 **Base de datos:** Turso (SQLite serverless) mediante `libsql-client`  
 **Estado de conversación:** Flask `session` (cookie firmada con `SECRET_KEY`)  
 **Control de versiones:** Git / GitHub (`Leecsito/Salus`) — https://github.com/Leecsito/Salus
@@ -286,8 +286,9 @@ LIMIT ?
 
 - **Conexión:** `libsql_client.create_client(url=TURSO_URL, auth_token=TURSO_TOKEN)` como context manager async.
 - **Normalización:** cada fila se convierte en dict con claves `nombre`, `marca`, `descripcion`, `precio`, `enlace`, `para_que_sirve`, `como_tomar`, `dosis`, `via_administracion`, `edad_recomendada`, `contraindicaciones`, `advertencias`, `recomendaciones`, `disponible`.
-- **Enlace:** se construye como `https://naturesgreenec.com/producto/{slug}` (o `None` si no hay slug).
-- **Límites:** `oculto = 0` excluye productos ocultos; `LIMIT ?` devuelve hasta `LIMITE_PRODUCTOS` coincidencias (default 3).
+- **Enlace:** se construye como `https://www.naturesgreenec.com/producto/{slug}` (o `None` si no hay slug).
+- **Ranking:** los resultados se ordenan por prioridad = número de campos clave presentes (`foto_url`, `video_url`, `info_completada`, `categoria_id`, `star`/`superstar`). El stock **no** influye en el orden (solo informa `disponible`). Así el vendedor recibe los productos más completos, no los primeros que aparezcan.
+- **Límites:** `oculto = 0` excluye productos ocultos; `LIMIT ?` devuelve hasta `LIMITE_PRODUCTOS` coincidencias (default 3), ya ordenadas por prioridad.
 
 ### [Helper] `producto/vendedor.py` — Respuesta de ventas conversacional
 
@@ -368,7 +369,7 @@ Columnas consultadas por `producto/database.py` (el esquema completo de la tabla
 | `marca` | TEXT | Se pasa al prompt del vendedor. |
 | `descripcion` | TEXT | Campo de búsqueda `LIKE` y contexto para la IA. |
 | `precio1` | REAL/INTEGER | Precio que el vendedor comunica (clave `precio`). |
-| `slug` | TEXT | Construye `https://naturesgreenec.com/producto/{slug}`. |
+| `slug` | TEXT | Construye `https://www.naturesgreenec.com/producto/{slug}`. |
 | `para_que_sirve` | TEXT | Contexto para el vendedor (1 frase en la respuesta). |
 | `como_tomar` | TEXT | Contexto interno; el prompt prohíbe mostrarlo. |
 | `dosis` | TEXT | Contexto interno; el prompt prohíbe mostrarlo. |
@@ -377,18 +378,23 @@ Columnas consultadas por `producto/database.py` (el esquema completo de la tabla
 | `contraindicaciones` | TEXT | Contexto interno; el prompt prohíbe mostrarlo. |
 | `advertencias` | TEXT | Contexto interno. |
 | `recomendaciones` | TEXT | Contexto interno. |
-| `stock` | INTEGER | Se transforma en `disponible = (stock > 0)`. |
+| `stock` | INTEGER | Se transforma en `disponible = (stock > 0)` (informativo; no influye en el ranking). |
 | `oculto` | INTEGER | Filtro `oculto = 0` (productos visibles). |
+| `foto_url` | TEXT | Ranking: +1 si tiene foto. |
+| `video_url` | TEXT | Ranking: +1 si tiene video. |
+| `info_completada` | INTEGER | Ranking: +1 si la información está completa. |
+| `categoria_id` | INTEGER | Ranking: +1 si pertenece a una categoría. |
+| `star` / `superstar` | INTEGER | Ranking: +1 si es destacado (`star` o `superstar` > 0). |
 
 > [!NOTE]
-> La consulta devuelve hasta `LIMITE_PRODUCTOS` coincidencias (default 3, configurable). El vendedor las recibe todas y compara/recomienda; con lista vacía responde que no lo encontró y pregunta qué busca.
+> La consulta devuelve hasta `LIMITE_PRODUCTOS` coincidencias (default 3, configurable) **ordenadas por prioridad** (campos clave completos). El vendedor las recibe todas y compara/recomienda; con lista vacía responde que no lo encontró y pregunta qué busca.
 
 ### B. Contrato del dict `producto` (salida de `buscar_producto`)
 
 ```json
 {
   "nombre": "…", "marca": "…", "descripcion": "…", "precio": 0,
-  "enlace": "https://naturesgreenec.com/producto/slug",
+  "enlace": "https://www.naturesgreenec.com/producto/slug",
   "para_que_sirve": "…", "como_tomar": "…", "dosis": "…",
   "via_administracion": "…", "edad_recomendada": "…",
   "contraindicaciones": "…", "advertencias": "…", "recomendaciones": "…",
@@ -436,6 +442,7 @@ Columnas consultadas por `producto/database.py` (el esquema completo de la tabla
 11. **Historial, tratamiento y venta pendientes:** existen como esqueletos en sus carpetas (`historial/`, `tratamiento/`, `venta/`) con `responder` placeholder y TODO; aún no tienen lógica de negocio.
 12. **Saludo inicial:** la conversación arranca en `saludo`; el LLM genera una bienvenida variada (enfoques aleatorios) sin asumir productos, y el primer mensaje del cliente solo se usa como contexto (no se clasifica). A partir del siguiente turno, todo pasa por `atencion`.
 13. **Contexto en producto:** extractor y vendedor reciben los últimos `HISTORIAL_TURNOS` turnos (default 4) mediante `producto/contexto.py`; por eso las referencias ("y bueno?", "y solo tienen ese?", "ese") se resuelven sin repetir el producto. Si el extractor no logra un término, la repregunta también la genera el LLM con ese contexto (nada de texto fijo).
+14. **Ranking de productos:** la búsqueda prioriza productos con `foto_url`, `video_url`, `info_completada`, `categoria_id` y `star`/`superstar` (más campos completos = mejor posición); el stock no influye en el orden y los ocultos nunca se muestran. Los enlaces de producto se construyen siempre con `www`: `https://www.naturesgreenec.com/producto/{slug}`.
 
 ---
 

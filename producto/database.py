@@ -2,6 +2,11 @@
 database.py — Consulta a la base de datos Turso.
 Responsabilidad: conectarse a Turso (SQLite serverless) y buscar productos
 por nombre o descripción. Devuelve una lista de diccionarios con los datos.
+
+Ranking de resultados: se ordenan por "calidad" del producto — cuantos más
+campos prioritarios tenga (foto_url, video_url, info_completada, categoria_id,
+star/superstar), mejor posición. El stock NO influye en el orden. Los
+productos ocultos (oculto = 1) se excluyen siempre.
 """
 import logging
 import libsql_client
@@ -12,6 +17,7 @@ from core.logs import recortar
 
 logger = logging.getLogger("salus.turso")
 
+# `prioridad` = suma de campos clave presentes (0-5); se usa solo para ordenar.
 CONSULTA_SQL = """
 SELECT nombre_producto, marca, descripcion, precio1, slug,
        para_que_sirve, como_tomar, dosis, via_administracion,
@@ -19,16 +25,23 @@ SELECT nombre_producto, marca, descripcion, precio1, slug,
        (stock > 0) AS disponible
 FROM productos
 WHERE (nombre_producto LIKE ? OR descripcion LIKE ?) AND oculto = 0
+ORDER BY
+    ((foto_url IS NOT NULL AND foto_url <> '')
+   + (video_url IS NOT NULL AND video_url <> '')
+   + (IFNULL(info_completada, 0) > 0)
+   + (IFNULL(categoria_id, 0) > 0)
+   + (IFNULL(star, 0) > 0 OR IFNULL(superstar, 0) > 0)) DESC
 LIMIT ?
 """
 
 async def buscar_producto(termino: str) -> list:
     """
-    Consulta Turso con el término dado (hasta LIMITE_PRODUCTOS filas).
-    Devuelve lista de dicts con los campos del producto, o lista vacía si no hay resultados.
+    Consulta Turso con el término dado (hasta LIMITE_PRODUCTOS filas, las de
+    mejor prioridad). Devuelve lista de dicts o lista vacía si no hay resultados.
     """
     termino_sql = f"%{termino}%"
-    logger.info("Turso → consulta productos LIKE %r | limite=%d", recortar(termino, 80), LIMITE_PRODUCTOS)
+    logger.info("Turso → consulta productos LIKE %r | limite=%d | ranking=prioridad",
+                recortar(termino, 80), LIMITE_PRODUCTOS)
     async with libsql_client.create_client(url=TURSO_URL, auth_token=TURSO_TOKEN) as db:
         resultado = await db.execute(CONSULTA_SQL, [termino_sql, termino_sql, LIMITE_PRODUCTOS])
 
@@ -40,7 +53,7 @@ async def buscar_producto(termino: str) -> list:
                 "marca":             fila[1],
                 "descripcion":       fila[2],
                 "precio":            fila[3],
-                "enlace":            f"https://naturesgreenec.com/producto/{slug}" if slug else None,
+                "enlace":            f"https://www.naturesgreenec.com/producto/{slug}" if slug else None,
                 "para_que_sirve":    fila[5],
                 "como_tomar":        fila[6],
                 "dosis":             fila[7],
