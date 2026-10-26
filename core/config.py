@@ -22,11 +22,24 @@ API_KEYS: list[str] = [k.strip() for k in _raw_keys.split(",") if k.strip()]
 # Modelo usado en todo el proyecto (se puede cambiar sin tocar código con GROQ_MODEL)
 MODELO: str = os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b")
 
+# Modelo del extractor (producto/extractor.py). Separado para repartir la cuota
+# diaria de tokens: cada modelo tiene su propio TPD en Groq (default: 120b).
+MODELO_EXTRACCION: str = os.environ.get("GROQ_MODEL_EXTRACCION", "openai/gpt-oss-120b")
+
 # ── Producto ──────────────────────────────────────────────────────────────────
 # Turnos recientes que se pasan como contexto al extractor y al vendedor
 HISTORIAL_TURNOS: int = int(os.environ.get("HISTORIAL_TURNOS", "4"))
-# Máximo de productos que devuelve Turso y recibe el vendedor
-LIMITE_PRODUCTOS: int = int(os.environ.get("LIMITE_PRODUCTOS", "8"))
+# Máximo de productos que devuelve Turso y recibe el vendedor (dieta de tokens)
+LIMITE_PRODUCTOS: int = int(os.environ.get("LIMITE_PRODUCTOS", "6"))
+
+# ── Búsqueda web (Tavily) ─────────────────────────────────────────────────────
+# Respaldo cuando la DB no alcanza (dato puntual o 0 resultados). Sin key se omite.
+TAVILY_API_KEY: str = os.environ.get("TAVILY_API_KEY", "")
+# Resultados que se piden a Tavily por consulta
+WEB_MAX_RESULTADOS: int = int(os.environ.get("WEB_MAX_RESULTADOS", "4"))
+# Caché en memoria de consultas repetidas: TTL en segundos y máximo de entradas
+WEB_CACHE_TTL: int = int(os.environ.get("WEB_CACHE_TTL", "21600"))  # 6 horas
+WEB_CACHE_MAX: int = int(os.environ.get("WEB_CACHE_MAX", "200"))
 
 # ── Turso ─────────────────────────────────────────────────────────────────────
 TURSO_URL: str = os.environ.get("TURSO_URL", "")

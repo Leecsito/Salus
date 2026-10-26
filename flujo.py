@@ -23,6 +23,14 @@ logger = logging.getLogger("salus.flujo")
 # Fase con la que arranca toda conversación nueva.
 FASE_INICIAL = "saludo"
 
+# Regla de negocio: SOLO el historial clínico puede derivar a tratamiento
+# (y, cuando implemente el intake, solo con la validación completa). La guarda
+# es estructural: no depende de que el LLM clasifique bien la intención.
+ORIGENES_PERMITIDOS_A_TRATAMIENTO = ("historial",)
+
+TRANSICION_A_HISTORIAL = ("Para recomendarte un tratamiento necesito primero revisar tus "
+                          "antecedentes de salud. Empecemos por tu historial clínico.")
+
 # Registro de fases → función de entrada del componente.
 FASES = {
     "saludo":      comp_saludo.responder,
@@ -39,9 +47,20 @@ def despachar(fase: str, mensaje: str, historial: list):
     Envía el mensaje al componente de la fase actual.
     Devuelve (respuesta, siguiente_fase, historial).
     Si la fase no existe, reinicia la conversación en FASE_INICIAL.
+    Guarda central: si un componente intenta derivar a "tratamiento" desde una
+    fase que no es "historial", la transición se bloquea y se redirige al
+    historial clínico.
     """
     responder = FASES.get(fase)
     if responder is None:
         logger.warning("Fase desconocida %r → reiniciando a %s", fase, FASE_INICIAL)
         return "Sesión reiniciada. ¿En qué te puedo ayudar?", FASE_INICIAL, []
-    return responder(mensaje, historial)
+
+    respuesta, siguiente_fase, historial_actualizado = responder(mensaje, historial)
+
+    if siguiente_fase == "tratamiento" and fase not in ORIGENES_PERMITIDOS_A_TRATAMIENTO:
+        # TODO: al implementar historial, exigir además que el intake esté validado.
+        logger.warning("Transición a tratamiento bloqueada desde %r → historial clínico", fase)
+        return TRANSICION_A_HISTORIAL, "historial", []
+
+    return respuesta, siguiente_fase, historial_actualizado

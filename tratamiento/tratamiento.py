@@ -14,7 +14,8 @@ def responder(mensaje: str, historial: list):
 
     TODO: definir el flujo de negocio del tratamiento (prompt del sistema,
     criterios de recomendación, transiciones y datos que necesite) antes de
-    implementarlo.
+    implementarlo. Debe ser defensivo: sin datos clínicos validados debe
+    redirigir a "historial" (la guarda central vive en flujo.py).
     """
     logger.warning("Tratamiento | componente sin implementar (esqueleto)")
     return "El módulo de tratamiento aún no está disponible.", "tratamiento", historial

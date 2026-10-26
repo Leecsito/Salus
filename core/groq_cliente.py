@@ -5,6 +5,11 @@ groq_cliente.py — Cliente compartido de Groq para todo el proyecto SALUS (core
 - HTTP 401 (key inválida o revocada) → salta a la siguiente key
 - HTTP 429 (rate limit)               → salta a la siguiente key
 Si todas las keys fallan, relanza la excepción.
+
+Los reintentos internos del SDK quedan desactivados (`max_retries=0`): la
+rotación de keys ya maneja el 429 y así se evitan esperas ocultas del SDK.
+`es_limite_diario()` distingue el 429 por tokens/día (TPD) del 429 por minuto:
+ante TPD, reintentar el mismo modelo no ayuda hasta que la cuota se renueve.
 """
 import logging
 import time
@@ -16,7 +21,12 @@ from core.logs import mascara_key
 logger = logging.getLogger("salus.groq")
 
 def obtener_cliente(indice_key: int) -> Groq:
-    return Groq(api_key=API_KEYS[indice_key])
+    return Groq(api_key=API_KEYS[indice_key], max_retries=0)
+
+def es_limite_diario(error: Exception) -> bool:
+    """True si el 429 es por límite de tokens por día (TPD): reintentar no ayuda."""
+    texto = str(error).lower()
+    return "per day" in texto or "tokens per day" in texto
 
 def llamar_groq(messages, model=MODELO, temperature=0.3, response_format=None):
     """
